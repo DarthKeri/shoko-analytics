@@ -1,0 +1,36 @@
+# Secrets and local state
+credentials*.json
+*credentials*.json
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+*.pem
+*.key
+config.local.*
+settings.local.*
+# Private inputs and runtime outputs
+/data/
+/downloads/
+/backups/
+/logs/
+/runtime/
+*.xlsx
+*.xls
+*.xlsm
+*.mxl
+*.csv
+*.db
+*.sqlite*
+# Build and environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.exe
+*.dll
+node_modules/
