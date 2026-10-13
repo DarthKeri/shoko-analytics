@@ -34,3 +34,13 @@ dist/
 *.exe
 *.dll
 node_modules/
+/web/
+*.lnk
+*.vault
+/inputs/
+/plans/
+/sessions/
+/output/
+/instance.lock
+/smoke-ok.txt
+/ui-smoke.json
