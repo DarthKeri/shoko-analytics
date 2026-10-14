@@ -1,6 +1,6 @@
 {
   "name": "shoko-analytics-ui",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {"dev": "vite --host 127.0.0.1", "build": "vite build"},

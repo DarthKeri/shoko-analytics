@@ -182,7 +182,9 @@ class Engine:
         elif name == 'target':
             if config['target_mode'] == 'google':
                 self.check_one('credentials', config, processing_date)
-            target(config).snapshot()
+                target(config).check()
+            else:
+                target(config).snapshot()
         elif name == 'csv':
             if config['telegram_mode'] == 'auto':
                 self.telegram.call(self.telegram.check(config['telegram_bot']))

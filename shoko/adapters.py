@@ -235,6 +235,25 @@ def google_value(value):
     return {'stringValue': str(value)}  # RAW text, never USER_ENTERED formula injection
 
 
+def google_request_error(exc):
+    """Classify failures without exposing keys, request JWTs or response payloads."""
+    from requests.exceptions import SSLError, Timeout, ConnectionError
+    from google.auth.exceptions import RefreshError
+    chain, seen, value = [], set(), exc
+    while value is not None and id(value) not in seen:
+        seen.add(id(value)); chain.append(value)
+        value = value.__cause__ or value.__context__
+    if any(isinstance(item, SSLError) for item in chain):
+        return 'Google: не удалось проверить HTTPS-сертификат. Проверьте доверенные сертификаты Windows, антивирус или прокси.'
+    if any(isinstance(item, Timeout) for item in chain):
+        return 'Google не ответил вовремя. Подключение: до 10 секунд, ожидание данных: до 45 секунд на запрос. Повторите проверку.'
+    if any(isinstance(item, ConnectionError) for item in chain):
+        return 'Не удалось установить соединение с Google. Проверьте интернет, DNS и прокси.'
+    if any(isinstance(item, RefreshError) for item in chain):
+        return 'Google не принял авторизацию сервисного аккаунта. Проверьте действительность credentials.json и дату/время Windows.'
+    return 'Не удалось выполнить запрос к Google. Проверьте ключ доступа и настройки подключения.'
+
+
 class GoogleTarget:
     def __init__(self, config):
         self.id = guard_target(config)
@@ -251,18 +270,24 @@ class GoogleTarget:
     def request(self, method, suffix='', **kwargs):
         try:
             response = self.session.request(method, self.base + suffix, timeout=(10, 45), **kwargs)
-        except Exception:
-            raise AppError('Нет соединения с Google или истёк таймаут. Проверьте интернет и повторите.') from None
+        except Exception as exc:
+            raise AppError(google_request_error(exc)) from None
         if response.status_code >= 400:
             messages = {401: 'Google не принял ключ доступа.', 403: 'Нет доступа к тестовой Google-таблице. Предоставьте сервисному аккаунту права редактора.', 404: 'Google-таблица не найдена.', 429: 'Google ограничил частоту запросов. Повторите позже.'}
-            raise AppError(messages.get(response.status_code, f'Google вернул ошибку {response.status_code}. Копия сохранена, проверьте журнал.'))
+            raise AppError(messages.get(response.status_code, f'Google вернул ошибку HTTP {response.status_code}.'))
         return response.json()
 
-    def snapshot(self):
-        meta = self.request('GET', params={'includeGridData': 'false'})
+    def check(self):
+        # Status only verifies access and the required sheet, without downloading cells.
+        meta = self.request('GET', params={'includeGridData': 'false', 'fields': 'spreadsheetId,sheets(properties)'})
         titles = {s['properties']['title'] for s in meta.get('sheets', [])}
         if TARGET not in titles:
             raise AppError(f'В Google-таблице нет листа «{TARGET}».')
+        return meta
+
+    def snapshot(self):
+        meta = self.check()
+        titles = {s['properties']['title'] for s in meta.get('sheets', [])}
         names = [name for name in SHEETS if name in titles]
         data = self.request('GET', params={'includeGridData': 'true', 'ranges': ["'" + name + "'" for name in names]})
         sheets = {}

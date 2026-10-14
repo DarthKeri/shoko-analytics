@@ -5,6 +5,11 @@ import os
 import sys
 import threading
 from pathlib import Path
+# Follow Windows' configured trust store for Google HTTPS, including managed CAs.
+# Hostname and certificate verification remain enabled.
+if os.name == 'nt':
+    import truststore
+    truststore.inject_into_ssl()
 from shoko.engine import Engine
 from shoko.server import Server
 from shoko.storage import AppError, InstanceLock, resolve_root
@@ -33,7 +38,7 @@ def main():
     try:
         if args.smoke:
             assert engine.public_state()['config'] is not None
-            (root / 'smoke-ok.txt').write_text('Shoko Analytics 0.1.1: assets and backend loaded', encoding='utf-8')
+            (root / 'smoke-ok.txt').write_text('Shoko Analytics 0.1.2: assets and backend loaded', encoding='utf-8')
             return
         server.start()
         if args.browser:

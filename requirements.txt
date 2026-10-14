@@ -3,6 +3,7 @@ pywebview==6.2.1
 Telethon==1.45.0
 google-auth==2.62.0
 requests==2.34.2
+truststore==0.10.5; sys_platform == "win32"
 PyInstaller==6.22.3
 
 pywin32==311; sys_platform == "win32"
