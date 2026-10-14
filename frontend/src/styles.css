@@ -62,3 +62,8 @@ html,body,#root{margin:0;min-height:100%;background:#0d0d0d;color:#ececec}body{f
 #shoko-dark .preview-page>.sd-tablewrap{max-height:48vh;min-height:120px;border-top:1px solid #333}#shoko-dark .preview-page th{position:sticky;top:0;background:#0d0d0d;z-index:1}#shoko-dark .pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;font-size:12px}#shoko-dark .preview-page>.sd-footer{padding-top:24px}#shoko-dark .sd-dialog .sd-tablewrap{max-height:40vh}
 
 #shoko-dark .full-result th,#shoko-dark .full-result td{white-space:nowrap;overflow-wrap:normal;min-width:65px}#shoko-dark .full-result td:nth-child(2),#shoko-dark .full-result td:nth-child(3){min-width:110px}
+
+#shoko-dark .sd-field-example{display:block;margin-top:8px;font-size:13px;line-height:1.5;color:#aaa;overflow-wrap:anywhere}
+#shoko-dark .settings-check{display:flex;flex-direction:column;gap:5px;padding:10px 14px;border-left:2px solid #ccc;background:#191919;color:#eee;white-space:pre-line;overflow-wrap:anywhere}
+#shoko-dark .settings-check small{font-size:12px;color:#aaa}
+#shoko-dark .settings-page>.sd-footer .sd-actions{flex-wrap:wrap;gap:12px}

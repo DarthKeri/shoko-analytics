@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from shoko.engine import Engine
 from shoko.server import Server
-from shoko.storage import AppError, InstanceLock
+from shoko.storage import AppError, InstanceLock, resolve_root
 
 
 def main():
@@ -19,15 +19,7 @@ def main():
     parser.add_argument('--smoke', action='store_true', help='Validate bundled assets and backend; do not open a window')
     args = parser.parse_args()
     root = args.data_dir or Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'ShokoAnalytics'
-    seen = set()
-    while (root / 'settings.local.json').exists():
-        redirect = json.loads((root / 'settings.local.json').read_text(encoding='utf-8')).get('redirect_root')
-        if not redirect:
-            break
-        if str(root.resolve()) in seen:
-            raise AppError('Цикл перенаправлений рабочей папки.')
-        seen.add(str(root.resolve()))
-        root = Path(redirect)
+    root = resolve_root(root)
     from shoko.adapters import PROTECTED_ARCHIVE
     if root.resolve() == PROTECTED_ARCHIVE or PROTECTED_ARCHIVE in root.resolve().parents:
         raise AppError('Исходный архив нельзя использовать как рабочую папку.')
@@ -41,7 +33,7 @@ def main():
     try:
         if args.smoke:
             assert engine.public_state()['config'] is not None
-            (root / 'smoke-ok.txt').write_text('Shoko Analytics 0.1.0: assets and backend loaded', encoding='utf-8')
+            (root / 'smoke-ok.txt').write_text('Shoko Analytics 0.1.1: assets and backend loaded', encoding='utf-8')
             return
         server.start()
         if args.browser:

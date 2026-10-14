@@ -162,8 +162,8 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(self.engine.public_state()['target_allowed'])
         with self.assertRaises(AppError):self.engine.prepare('https://garage.example.test','2026-08-20',True)
 
-    def test_setup_only_finishes_after_checks(self):
-        self.assertFalse(self.engine.config()['initialized'])
+    def test_saved_setup_does_not_require_wizard_on_restart(self):
+        self.assertTrue(self.engine.config()['initialized'])
         self.engine.finish_setup();self.assertTrue(self.engine.config()['initialized'])
 
     def test_cancel_before_read_never_writes(self):

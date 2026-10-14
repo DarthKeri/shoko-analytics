@@ -49,6 +49,38 @@ def defaults():
                 telegram_bot='', telegram_api_id='', telegram_timeout=120, last_url='', last_date='')
 
 
+def resolve_root(root):
+    """Follow a workspace locator; migrate old locators that duplicated settings."""
+    root, seen, legacy = Path(root).resolve(), set(), []
+    while True:
+        if root in seen:
+            raise AppError('Цикл перенаправлений рабочей папки.')
+        seen.add(root)
+        locator, settings = root / 'workspace.location.json', root / 'settings.local.json'
+        try:
+            if locator.exists():
+                redirect = json.loads(locator.read_text(encoding='utf-8'))['root']
+            elif settings.exists():
+                previous = json.loads(settings.read_text(encoding='utf-8'))
+                redirect = previous.get('redirect_root')
+                if redirect:
+                    legacy.append((root, previous))
+            else:
+                redirect = None
+        except (ValueError, KeyError, OSError):
+            raise AppError('Не удалось прочитать расположение данных или settings.local.json.') from None
+        if not redirect:
+            break
+        root = Path(redirect).expanduser().resolve()
+    if legacy:
+        if not (root / 'settings.local.json').exists():
+            atomic_json(root / 'settings.local.json', {k: v for k, v in legacy[-1][1].items() if k != 'redirect_root'})
+        for old_root, _ in legacy:
+            atomic_json(old_root / 'workspace.location.json', {'root': str(root)})
+            (old_root / 'settings.local.json').unlink()
+    return root
+
+
 class Store:
     def __init__(self, root):
         self.root = Path(root).resolve()
@@ -62,6 +94,10 @@ class Store:
                 self.config.update(json.loads(self.config_path.read_text(encoding='utf-8')))
             except (ValueError, OSError) as exc:
                 raise AppError('Настройки повреждены. Сохраните файл settings.local.json и проверьте его.') from exc
+            # Older builds saved fields but never completed the all-or-nothing wizard.
+            if not self.config['initialized'] and any(self.config.get(k) for k in ('prostoi', 'drivers', 'csv', 'target', 'credentials', 'telegram_bot')):
+                self.config['initialized'] = True
+                atomic_json(self.config_path, self.config)
 
     def backup_json(self, value, kind, target, run_id=''):
         identity = datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
@@ -91,8 +127,8 @@ class Store:
     def save_config(self, values):
         with self.mutex:
             candidate = dict(self.config, **values)
-            if self.config_path.exists():
-                self.backup_json(self.config, 'settings', str(self.config_path))
+            if candidate == self.config and self.config_path.exists():
+                return
             atomic_json(self.config_path, candidate)
             self.config = candidate
 
@@ -112,7 +148,8 @@ class Store:
             return stream.read().decode('utf-8', errors='replace')
 
     def copies(self):
-        return sorted([json.loads(p.read_text(encoding='utf-8')) for p in (self.root / 'backups').glob('*/manifest.json')], key=lambda x: x['created'], reverse=True)
+        manifests = [json.loads(p.read_text(encoding='utf-8')) for p in (self.root / 'backups').glob('*/manifest.json')]
+        return sorted([m for m in manifests if m['kind'] != 'settings'], key=lambda x: x['created'], reverse=True)
 
     def copy(self, identity):
         if not isinstance(identity, str) or not all(c.isalnum() or c == '-' for c in identity):

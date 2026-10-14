@@ -2,9 +2,9 @@ import React,{useEffect,useRef} from 'react';
 import {action} from './api.js';
 
 export function Button({primary=false,children,...props}){return <button type="button" className={'sd-button'+(primary?' sd-primary':'')} {...props}>{children}</button>}
-export function FileField({label,value,onChange,kind='xlsx',disabled=false,onError}){
+export function FileField({label,value,onChange,kind='xlsx',example='',disabled=false,onError}){
   async function choose(){try{const result=await action('choose',{kind});if(result.path)onChange(result.path)}catch(error){onError(error.message)}}
-  return <label className="file-field">{label}<div className="file-field-controls"><input type="text" value={value||''} disabled={disabled} onChange={e=>onChange(e.target.value)} placeholder={kind==='folder'?'Путь к папке':'Полный путь к файлу'}/><Button disabled={disabled} onClick={choose}>Выбрать</Button></div></label>
+  return <label className="file-field">{label}<div className="file-field-controls"><input type="text" value={value||''} disabled={disabled} onChange={e=>onChange(e.target.value)} placeholder={kind==='folder'?'Путь к папке':'Полный путь к файлу'}/><Button disabled={disabled} onClick={choose}>Выбрать</Button></div>{example&&<span className="sd-field-example">Пример: «{example}»</span>}</label>
 }
 export function Errors({text}){return <div className="sd-problems"><div className="sd-error-heading">Ошибки</div><div role="status" aria-live="polite" className="problem-text">{text||'Ошибок не обнаружено'}</div></div>}
 export function Modal({title,children,onClose,actions}){

@@ -44,3 +44,4 @@ node_modules/
 /instance.lock
 /smoke-ok.txt
 /ui-smoke.json
+workspace.location.json

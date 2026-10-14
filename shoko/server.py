@@ -160,16 +160,19 @@ class Server:
                 new_store = Store(new_root)
                 new_lock = InstanceLock(new_root)
                 old_store = engine.store
+                try:
+                    if not new_store.config_path.exists():
+                        new_store.save_config(engine.config())
+                    atomic_json(old_store.root / 'workspace.location.json', {'root': str(new_root)})
+                    old_store.config_path.unlink(missing_ok=True)
+                except Exception:
+                    new_lock.close()
+                    raise
                 engine.telegram.close()
-                config = engine.config()
                 engine.store = new_store
                 if getattr(engine, 'root_lock', None):
                     engine.root_lock.close()
                 engine.root_lock = new_lock
-                redirected = dict(config, redirect_root=str(new_root))
-                old_store.save_config(redirected)
-                if not engine.store.config_path.exists():
-                    engine.store.save_config(config)
                 engine.telegram = Telegram(engine.store)
                 return engine.public_state()
         raise AppError('Неизвестное действие.')

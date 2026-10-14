@@ -17,7 +17,10 @@ CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credential
 
 
 def resolved(value, processing_date):
-    return value.format(year=processing_date.year, yy=str(processing_date.year)[-2:], month=f'{processing_date.month:02d}')
+    try:
+        return value.format(year=processing_date.year, yy=str(processing_date.year)[-2:], month=f'{processing_date.month:02d}')
+    except (KeyError, ValueError, IndexError):
+        raise AppError('Неверный шаблон пути. Допустимы {year}, {yy} и {month}.') from None
 
 
 class Engine:
@@ -49,7 +52,8 @@ class Engine:
         with self.lock:
             if self.busy():
                 raise AppError('Дождитесь завершения операции перед изменением настроек.')
-            candidate = dict(self.config(), **{k: v for k, v in values.items() if k in CONFIG_KEYS})
+            previous = self.config()
+            candidate = dict(previous, **{k: v for k, v in values.items() if k in CONFIG_KEYS})
             if candidate['target_mode'] not in ('local', 'google') or candidate['telegram_mode'] not in ('manual', 'auto'):
                 raise AppError('Неверный тип подключения.')
             try:
@@ -57,16 +61,21 @@ class Engine:
             except (TypeError, ValueError):
                 raise AppError('Время ожидания бота должно быть числом.') from None
             if 'test_copy_confirmed' in values:
-                candidate['allowed_targets'] = [target_key(candidate)] if values['test_copy_confirmed'] else []
+                candidate['allowed_targets'] = [target_key(candidate)] if values['test_copy_confirmed'] and candidate['target'] else []
             # Saving incomplete first-run settings is allowed. Writes require guard_target.
             if candidate['target'] and candidate['allowed_targets']:
                 guard_target(candidate)
-            candidate['initialized'] = self.config()['initialized']
+            candidate['initialized'] = True
+            if candidate == previous:
+                return self.public_state()
             self.store.save_config(candidate)
             self.plan = None
             self.state.update(phase='idle', plan_id='', error='')
-            self.checks = {}
-            self.store.log('INFO', 'Настройки сохранены. Предыдущая версия сохранена перед изменением.')
+            dependencies = {'prostoi': ('prostoi', 'last_date'), 'drivers': ('drivers', 'last_date'),
+                            'target': ('target', 'target_mode', 'credentials', 'allowed_targets'),
+                            'credentials': ('credentials',), 'csv': ('csv', 'telegram_mode', 'telegram_bot', 'telegram_timeout')}
+            self.checks = {k: v for k, v in self.checks.items() if not any(previous.get(key) != candidate.get(key) for key in dependencies[k])}
+            self.store.log('INFO', 'Настройки сохранены в settings.local.json.')
             return self.public_state()
 
     def finish_setup(self):
@@ -74,11 +83,6 @@ class Engine:
             if self.busy():
                 raise AppError('Дождитесь завершения проверки.')
             config = self.config()
-            processing = date.fromisoformat(config['last_date'] or date.today().isoformat())
-            inputs = self.inputs(config, processing)
-            for item in ('prostoi', 'drivers', 'target', 'csv'):
-                self.check_one(item, inputs, processing)
-                self.checks[item] = {'ok': True, 'message': 'Доступен', 'checked': stamp(), 'date': processing.isoformat()}
             config['initialized'] = True
             self.store.save_config(config)
             return {'finished': True}
@@ -211,6 +215,12 @@ class Engine:
     def prepare(self, url, processing_date, csv_confirmed=False):
         processing = date.fromisoformat(processing_date)
         config = self.inputs(self.config(), processing)
+        required = [('prostoi', 'Средние цены и простои'), ('drivers', 'Начисления'), ('target', 'Целевая копия')]
+        required += [('credentials', 'Ключ Google')] if config['target_mode'] == 'google' else []
+        required += [('telegram_bot', 'Бот Telegram')] if config['telegram_mode'] == 'auto' else [('csv', 'CSV из бота')]
+        missing = [label for key, label in required if not config[key].strip()]
+        if missing:
+            raise AppError('Заполните настройки: ' + ', '.join(missing) + '. Обновление не запущено.')
         parsed = urlparse(url)
         if parsed.scheme not in ('https', 'http') or not parsed.netloc or parsed.username or parsed.password:
             raise AppError('Вставьте корректную ссылку на Гараж.')
