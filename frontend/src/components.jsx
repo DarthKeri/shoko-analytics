@@ -3,7 +3,7 @@ import {action} from './api.js';
 
 export function Button({primary=false,children,...props}){return <button type="button" className={'sd-button'+(primary?' sd-primary':'')} {...props}>{children}</button>}
 export function Spinner(){return <span className="sd-spinner" aria-hidden="true"/>}
-export function Activity({label,detail='',elapsed}){return <div className="sd-activity" role="status"><Spinner/><div><strong>{label}</strong>{detail&&<span>{detail}</span>}</div>{elapsed!==undefined&&<small aria-hidden="true">{elapsed} с</small>}<div className="sd-activity-track" aria-hidden="true"><span/></div></div>}
+export function Activity({label,detail='',elapsed,children}){return <div className="sd-activity" role="status"><Spinner/><div><strong>{label}</strong>{detail&&<span>{detail}</span>}</div>{elapsed!==undefined&&<small aria-hidden="true">{elapsed} с</small>}{children}<div className="sd-activity-track" aria-hidden="true"><span/></div></div>}
 export function Tabs({label,items,value,onChange,disabled=false}){
   const id=useId();
   function keyboard(e,index){let next;if(e.key==='ArrowRight')next=(index+1)%items.length;else if(e.key==='ArrowLeft')next=(index-1+items.length)%items.length;else if(e.key==='Home')next=0;else if(e.key==='End')next=items.length-1;else return;e.preventDefault();onChange(items[next].id);e.currentTarget.parentElement.querySelectorAll('button')[next]?.focus()}

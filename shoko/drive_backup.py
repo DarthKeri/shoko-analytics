@@ -6,6 +6,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 from .adapters import google_request_error
 from .storage import AppError, atomic_json, digest, stamp
+from .google_errors import http_error
 
 DRIVE = 'https://www.googleapis.com/drive/v3/files/'
 SHEETS = 'https://sheets.googleapis.com/v4/spreadsheets/'
@@ -45,12 +46,7 @@ class DriveBackup:
             raise AppError(google_request_error(exc)) from None
         if response.status_code >= 400:
             # Never expose raw response bodies, JWTs, keys or document contents.
-            messages = {400: 'Google отклонил копирование или чтение комментариев. Обновление таблицы заблокировано.',
-                        401: 'Google не принял ключ доступа.',
-                        403: 'Нет прав на резервное копирование. Включите Google Drive API и предоставьте сервисному аккаунту доступ к таблице и папке копий.',
-                        404: 'Таблица или папка копий не найдена. Проверьте ссылку и права доступа.',
-                        429: 'Google ограничил частоту запросов. Повторите позже.'}
-            raise AppError(messages.get(response.status_code, f'Копирование Google: ошибка HTTP {response.status_code}.'))
+            raise AppError(http_error(response))
         return response.json()
 
     def metadata(self, identity):
@@ -61,7 +57,7 @@ class DriveBackup:
         if folder.get('trashed') or folder.get('mimeType') != 'application/vnd.google-apps.folder':
             raise AppError('Место для копий должно быть папкой Google Drive.')
         if not folder.get('capabilities', {}).get('canAddChildren'):
-            raise AppError('Нет права создавать файлы в папке копий. Проверьте права сервисного аккаунта.')
+            raise AppError('Нет права создавать файлы в папке копий. Проверьте права подключённого Google-аккаунта.')
         source = self.metadata(self.source)
         if source.get('trashed') or source.get('mimeType') != SHEET_MIME:
             raise AppError('Источник резервной копии должен быть Google-таблицей.')

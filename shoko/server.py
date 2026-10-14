@@ -126,6 +126,13 @@ class Server:
             return result
         if action == 'telegram':
             return engine.telegram_auth(body.get('step'), **body.get('values', {}))
+        if action == 'google-auth':
+            return engine.google_auth_action(body.get('step'))
+        if action == 'cancel-google':
+            return engine.cancel_google()
+        if action == 'open-google-setup':
+            webbrowser.open('https://console.cloud.google.com/auth/clients')
+            return {'opened': True}
         if action == 'open-cloud-copy':
             manifest, _ = engine.store.copy(body.get('id'))
             identity = manifest.get('cloud_id', '')
@@ -140,7 +147,7 @@ class Server:
             if body.get('kind') == 'folder':
                 result = self.window.create_file_dialog(webview.FileDialog.FOLDER)
             else:
-                types = {'xlsx': ('Excel (*.xlsx)',), 'csv': ('CSV (*.csv)',), 'json': ('Google key (*.json)',)}
+                types = {'xlsx': ('Excel (*.xlsx)',), 'csv': ('CSV (*.csv)',), 'json': ('Google JSON (*.json)',)}
                 result = self.window.create_file_dialog(webview.FileDialog.OPEN, allow_multiple=False, file_types=types.get(body.get('kind'), ('All files (*.*)',)))
             return {'path': result[0] if result else ''}
         if action == 'open-folder':
@@ -183,6 +190,8 @@ class Server:
                     engine.root_lock.close()
                 engine.root_lock = new_lock
                 engine.telegram = Telegram(engine.store)
+                from .google_auth import GoogleAuth
+                engine.google = GoogleAuth(engine.store)
                 return engine.public_state()
         raise AppError('Неизвестное действие.')
 

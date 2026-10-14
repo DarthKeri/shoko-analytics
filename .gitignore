@@ -1,5 +1,7 @@
 # Secrets and local state
 credentials*.json
+client_secret*.json
+google_oauth*.json
 *credentials*.json
 .env
 .env.*

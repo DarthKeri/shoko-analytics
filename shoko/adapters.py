@@ -250,13 +250,19 @@ def google_request_error(exc):
     if any(isinstance(item, ConnectionError) for item in chain):
         return 'Не удалось установить соединение с Google. Проверьте интернет, DNS и прокси.'
     if any(isinstance(item, RefreshError) for item in chain):
-        return 'Google не принял авторизацию сервисного аккаунта. Проверьте действительность credentials.json и дату/время Windows.'
-    return 'Не удалось выполнить запрос к Google. Проверьте ключ доступа и настройки подключения.'
+        return 'Google не принял авторизацию. Войдите в Google заново или проверьте ключ сервисного аккаунта и дату/время Windows.'
+    return 'Не удалось выполнить запрос к Google. Проверьте авторизацию и настройки подключения.'
 
 
 class GoogleTarget:
-    def __init__(self, config):
+    def __init__(self, config, google_auth=None):
         self.id = guard_target(config)
+        if config.get('google_auth_mode', 'service_account') == 'oauth':
+            if google_auth is None:
+                raise AppError('Вход Google недоступен. Перезапустите приложение и подключите аккаунт в настройках.')
+            self.session = google_auth.session(config)
+            self.base = 'https://sheets.googleapis.com/v4/spreadsheets/' + self.id
+            return
         path = readable(config.get('credentials'), {'.json'})
         from google.oauth2.service_account import Credentials
         from google.auth.transport.requests import AuthorizedSession
@@ -273,8 +279,8 @@ class GoogleTarget:
         except Exception as exc:
             raise AppError(google_request_error(exc)) from None
         if response.status_code >= 400:
-            messages = {401: 'Google не принял ключ доступа.', 403: 'Нет доступа к тестовой Google-таблице. Предоставьте сервисному аккаунту права редактора.', 404: 'Google-таблица не найдена.', 429: 'Google ограничил частоту запросов. Повторите позже.'}
-            raise AppError(messages.get(response.status_code, f'Google вернул ошибку HTTP {response.status_code}.'))
+            from .google_errors import http_error
+            raise AppError(http_error(response))
         return response.json()
 
     def check(self):
@@ -360,5 +366,5 @@ class GoogleTarget:
                 raise AppError(f'Ошибка сверки Google: {change["sheet"]}, {change["cell"]}. Копия сохранена.')
 
 
-def target(config):
-    return GoogleTarget(config) if config['target_mode'] == 'google' else LocalTarget(config)
+def target(config, google_auth=None):
+    return GoogleTarget(config, google_auth) if config['target_mode'] == 'google' else LocalTarget(config)

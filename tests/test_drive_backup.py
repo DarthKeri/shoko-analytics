@@ -193,7 +193,7 @@ class GoogleWriteGateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.engine = Engine(self.temp.name)
-        self.engine.save_settings({'target_mode': 'google', 'target': SOURCE, 'credentials': 'fixture.json',
+        self.engine.save_settings({'target_mode': 'google', 'target': SOURCE, 'credentials': 'fixture.json', 'google_auth_mode': 'service_account',
                                    'google_backup_folder': FOLDER, 'test_copy_confirmed': True})
         self.fixture = DriveFixture()
         self.snapshot = {'mode': 'google', 'target': SOURCE, 'fingerprint': 'reviewed', 'sheets': {}}

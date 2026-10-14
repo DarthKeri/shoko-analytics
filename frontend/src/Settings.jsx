@@ -1,6 +1,7 @@
 import React,{useState} from 'react';
 import {action} from './api.js';
 import {Button,FileField,Errors,Activity,Spinner,Tabs,timeText} from './components.jsx';
+import GoogleConnection from './GoogleConnection.jsx';
 
 const today=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'});
 
@@ -8,7 +9,7 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart})
   const [form,setForm]=useState(data.config),[confirmed,setConfirmed]=useState(Boolean(data.target_allowed));
   const [error,setError]=useState(''),[message,setMessage]=useState(''),[step,setStep]=useState(0);
   const [root,setRoot]=useState(data.root),[pending,setPending]=useState(false),[checking,setChecking]=useState('');
-  const [tab,setTab]=useState('files');
+  const [tab,setTab]=useState(data.state.operation==='google'?'google':'files');
   const [auth,setAuth]=useState({api_id:'',api_hash:'',phone:'',code:'',password:''});
   const busy=pending||['preparing','writing','checking','connecting'].includes(data.state.phase);
   const set=(key,value)=>{setForm(f=>({...f,[key]:value}));setError('');setMessage('');if(['target','target_mode'].includes(key))setConfirmed(false)};
@@ -54,6 +55,7 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart})
   const status=source=>{
     const result=data.checks[source];
     const dependencies={prostoi:['prostoi','last_date'],drivers:['drivers','last_date'],target:['target','target_mode','credentials'],credentials:['credentials'],backup:['google_backup_folder','target','credentials'],csv:['csv','telegram_mode','telegram_bot','telegram_timeout']};
+    for(const key of ['target','credentials','backup'])dependencies[key].push('google_auth_mode','google_oauth_client');
     const edited=dependencies[source].some(key=>form[key]!==data.config[key]);
     const running=checking===source&&data.state.phase==='checking';
     if(!running&&(!result||edited))return null;
@@ -77,10 +79,9 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart})
       <label>Расположение таблицы<select value={form.target_mode} onChange={e=>set('target_mode',e.target.value)} disabled={busy}><option value="local">Локальная книга Excel</option><option value="google">Google Sheets</option></select></label>
       {form.target_mode==='local'?<>{field('Копия книги с листом «Предложение цен»','target','xlsx','Анализ_конкурентов_копия.xlsx')}<Button disabled={busy} onClick={createCopy}>Создать копию из шаблона</Button></>:<>
         <label>Ссылка или ID тестовой таблицы<input type="text" value={form.target} disabled={busy} onChange={e=>set('target',e.target.value)}/></label>
-        {field('Ключ сервисного аккаунта Google','credentials','json','credentials.json')}
-        <Button disabled={busy} onClick={()=>check('credentials')}>Проверить credentials.json</Button>{status('credentials')}
+        <GoogleConnection form={form} set={set} busy={busy} data={data} field={field} check={check} status={status} save={save} request={request}/>
         <div className="settings-subgroup"><h3>Резервные копии в Google Drive</h3><label>Папка для резервных копий<input type="text" placeholder="https://drive.google.com/drive/folders/…" value={form.google_backup_folder||''} disabled={busy} onChange={e=>set('google_backup_folder',e.target.value)}/></label>
-          <p className="sd-muted settings-hint">Перед записью сохраняется вся Google-таблица. У сервисного аккаунта должен быть доступ к выбранной папке, а в проекте — включён Google Drive API.</p>
+          <p className="sd-muted settings-hint">Перед записью сохраняется вся Google-таблица с текущими комментариями. У подключённого аккаунта должен быть доступ к выбранной папке, а в проекте — включён Google Drive API.</p>
           <Button disabled={busy} onClick={()=>check('backup')}>Проверить папку копий</Button>{status('backup')}
         </div>
       </>}
