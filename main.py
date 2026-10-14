@@ -10,6 +10,7 @@ from pathlib import Path
 if os.name == 'nt':
     import truststore
     truststore.inject_into_ssl()
+from shoko import __version__
 from shoko.engine import Engine
 from shoko.server import Server
 from shoko.storage import AppError, InstanceLock, resolve_root
@@ -38,7 +39,7 @@ def main():
     try:
         if args.smoke:
             assert engine.public_state()['config'] is not None
-            (root / 'smoke-ok.txt').write_text('Shoko Analytics 0.2.0: assets and backend loaded', encoding='utf-8')
+            (root / 'smoke-ok.txt').write_text(f'Shoko Analytics {__version__}: assets and backend loaded', encoding='utf-8')
             return
         server.start()
         if args.browser:

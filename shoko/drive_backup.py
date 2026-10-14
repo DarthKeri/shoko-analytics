@@ -22,7 +22,7 @@ def folder_id(value):
             raise AppError('Укажите ссылку на папку Google Drive или её ID.')
         value = match.group(1)
     if not re.fullmatch(r'[A-Za-z0-9_-]{10,}', value):
-        raise AppError('Укажите папку для резервных копий на общем диске компании в настройках Google.')
+        raise AppError('Укажите папку для резервных копий Google Drive в настройках Google.')
     return value
 
 
@@ -47,7 +47,7 @@ class DriveBackup:
             # Never expose raw response bodies, JWTs, keys or document contents.
             messages = {400: 'Google отклонил копирование или чтение комментариев. Обновление таблицы заблокировано.',
                         401: 'Google не принял ключ доступа.',
-                        403: 'Нет прав на резервное копирование. Включите Google Drive API и предоставьте сервисному аккаунту доступ к общему диску и папке копий.',
+                        403: 'Нет прав на резервное копирование. Включите Google Drive API и предоставьте сервисному аккаунту доступ к таблице и папке копий.',
                         404: 'Таблица или папка копий не найдена. Проверьте ссылку и права доступа.',
                         429: 'Google ограничил частоту запросов. Повторите позже.'}
             raise AppError(messages.get(response.status_code, f'Копирование Google: ошибка HTTP {response.status_code}.'))
@@ -60,8 +60,6 @@ class DriveBackup:
         folder = self.metadata(self.folder)
         if folder.get('trashed') or folder.get('mimeType') != 'application/vnd.google-apps.folder':
             raise AppError('Место для копий должно быть папкой Google Drive.')
-        if not folder.get('driveId'):
-            raise AppError('Для сервисного аккаунта нужна папка на общем диске компании (Shared drive), а не в «Моём диске».')
         if not folder.get('capabilities', {}).get('canAddChildren'):
             raise AppError('Нет права создавать файлы в папке копий. Проверьте права сервисного аккаунта.')
         source = self.metadata(self.source)

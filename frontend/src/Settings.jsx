@@ -79,8 +79,8 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart})
         <label>Ссылка или ID тестовой таблицы<input type="text" value={form.target} disabled={busy} onChange={e=>set('target',e.target.value)}/></label>
         {field('Ключ сервисного аккаунта Google','credentials','json','credentials.json')}
         <Button disabled={busy} onClick={()=>check('credentials')}>Проверить credentials.json</Button>{status('credentials')}
-        <div className="settings-subgroup"><h3>Резервные копии в Google Drive</h3><label>Папка на общем диске компании<input type="text" placeholder="https://drive.google.com/drive/folders/…" value={form.google_backup_folder||''} disabled={busy} onChange={e=>set('google_backup_folder',e.target.value)}/></label>
-          <p className="sd-muted settings-hint">Перед записью сохраняется вся Google-таблица. У сервисного аккаунта должен быть доступ к папке на общем диске, а в проекте — включён Google Drive API.</p>
+        <div className="settings-subgroup"><h3>Резервные копии в Google Drive</h3><label>Папка для резервных копий<input type="text" placeholder="https://drive.google.com/drive/folders/…" value={form.google_backup_folder||''} disabled={busy} onChange={e=>set('google_backup_folder',e.target.value)}/></label>
+          <p className="sd-muted settings-hint">Перед записью сохраняется вся Google-таблица. У сервисного аккаунта должен быть доступ к выбранной папке, а в проекте — включён Google Drive API.</p>
           <Button disabled={busy} onClick={()=>check('backup')}>Проверить папку копий</Button>{status('backup')}
         </div>
       </>}

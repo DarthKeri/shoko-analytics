@@ -113,11 +113,12 @@ class DriveBackupTests(unittest.TestCase):
         self.assertEqual(len(self.fixture.posts), 0)
         self.assertEqual(self.store.copies(), [])
 
-    def test_service_account_requires_shared_drive_folder(self):
+    def test_accessible_my_drive_folder_is_accepted_for_backup(self):
         del self.fixture.folder['driveId']
-        with self.assertRaisesRegex(AppError, 'общем диске'):
-            self.create()
-        self.assertEqual(self.fixture.posts, [])
+        self.backup.check()
+        self.assertEqual(self.fixture.posts, [])  # Status remains read-only.
+        self.assertEqual(self.create()['status'], 'verified')
+        self.assertEqual(len(self.fixture.posts), 1)
 
     def test_folder_without_create_permission_blocks_copy(self):
         self.fixture.folder['capabilities']['canAddChildren'] = False
