@@ -13,6 +13,7 @@ from .calculation import assemble_prostoi, calculate, PROSTOI, DRIVERS, TARGET, 
 from .telegram import Telegram
 from .drive_backup import DriveBackup
 from .google_auth import GoogleAuth, client_config
+from .plans import save_plan, load_plan
 
 STEPS = ['Проверка файлов и доступа', 'Чтение исходных данных', 'Получение CSV', 'Подготовка изменений']
 CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'google_auth_mode', 'google_oauth_client', 'developer', 'telegram_mode', 'telegram_bot', 'telegram_timeout', 'last_url', 'last_date'}
@@ -300,13 +301,15 @@ class Engine:
                         before=before, after=after, changes=changes, sources=sources, config_digest=digest(self.config()), warnings=warnings)
             if config['target_mode'] == 'google' and config['google_auth_mode'] == 'oauth':
                 plan['google_identity'] = self.google.identity(config)
+            adapter.prepare_write(plan)  # Validate size before preview, approval or backup.
             plan['checksum'] = digest(plan)
-            atomic_json(self.store.root / 'plans' / (identity + '.json'), plan)
+            saved_path = save_plan(self.store.root, plan)
             self.check_cancel()
             with self.lock:
                 self.plan = plan
             self.set_phase(phase='preview', plan_id=identity, error='', step=4)
             self.store.log('INFO', f'Подготовлен план: {len(changes)} изменений. Запись ожидает подтверждения.')
+            self.store.log('INFO', f'Размер сохранённого плана: {saved_path.stat().st_size / 1_000_000:.2f} МБ.')
         return self.launch('prepare', work)
 
     def cancel(self):
@@ -327,7 +330,7 @@ class Engine:
                 raise AppError('Настройки изменились после просмотра. Подготовьте новый план.')
             if self.config()['target_mode'] == 'google' and self.config()['google_auth_mode'] == 'oauth' and approved.get('google_identity') != self.google.identity(self.config()):
                 raise AppError('Google-аккаунт изменился после просмотра. Подготовьте новый план.')
-            saved = json.loads((self.store.root / 'plans' / (identity + '.json')).read_text(encoding='utf-8'))
+            saved = load_plan(self.store.root, identity)
             content = dict(saved)
             expected = content.pop('checksum')
             if digest(content) != expected or expected != checksum:
@@ -340,6 +343,7 @@ class Engine:
             current = adapter.snapshot()
             if current['fingerprint'] != approved['before']['fingerprint']:
                 raise AppError('Целевая таблица изменилась после просмотра. Подготовьте новый план.')
+            prepared = adapter.prepare_write(approved)  # Never create a backup for an unsendable plan.
             self.set_phase(step=1)
             cloud = DriveBackup(adapter, self.config(), lambda text: self.set_phase(detail=text)) if current['mode'] == 'google' else None
             backup = cloud.create(self.store, current, identity) if cloud else self.store.backup_file(current['target'], identity)
@@ -356,7 +360,7 @@ class Engine:
             atomic_json(result_path, result)
             try:
                 self.set_phase(step=2)
-                adapter.write(approved)
+                adapter.write(approved, prepared=prepared)
                 self.set_phase(step=3)
                 adapter.verify(approved)
                 result.update(status='done', message='Обновление завершено, результат проверен.')

@@ -15,6 +15,7 @@ from shoko.adapters import LocalTarget, GoogleTarget, guard_target, read_csv, re
 from shoko.calculation import number, assemble_prostoi, driver_counts, PROSTOI, TARGET, DRIVERS, GARAGE
 from shoko.storage import AppError, file_hash, InstanceLock
 from shoko.server import Server
+from shoko.plans import load_plan, save_plan
 
 
 def fixtures(folder):
@@ -111,9 +112,8 @@ class EngineTests(unittest.TestCase):
 
     def test_tampered_plan_blocks_write(self):
         plan = self.prepare()
-        path=self.engine.store.root/'plans'/(plan['id']+'.json')
-        saved=json.loads(path.read_text(encoding='utf-8'));saved['after'][TARGET][1][5]=666
-        path.write_text(json.dumps(saved),encoding='utf-8')
+        saved=load_plan(self.engine.store.root,plan['id']);saved['after'][TARGET][1][5]=666
+        save_plan(self.engine.store.root,saved)
         self.write(plan)
         self.assertIn('план повреждён',self.engine.state['error'])
         self.assertEqual(file_hash(self.paths['target']),self.original)
@@ -226,7 +226,7 @@ class RulesTests(unittest.TestCase):
         with patch.object(adapter,'request') as request:
             adapter.write(plan)
             request.assert_called_once()
-            body=request.call_args.kwargs['json']
+            body=json.loads(request.call_args.kwargs['data'])
             self.assertEqual(body['requests'][0]['addSheet']['properties']['sheetId'],6)
             for request_item in body['requests'][1:]:
                 self.assertEqual(request_item['updateCells']['fields'],'userEnteredValue')

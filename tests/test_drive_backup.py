@@ -197,7 +197,7 @@ class GoogleWriteGateTests(unittest.TestCase):
                                    'google_backup_folder': FOLDER, 'test_copy_confirmed': True})
         self.fixture = DriveFixture()
         self.snapshot = {'mode': 'google', 'target': SOURCE, 'fingerprint': 'reviewed', 'sheets': {}}
-        self.adapter = SimpleNamespace(id=SOURCE, session=self.fixture, snapshot=Mock(return_value=self.snapshot), write=Mock(), verify=Mock())
+        self.adapter = SimpleNamespace(id=SOURCE, session=self.fixture, snapshot=Mock(return_value=self.snapshot), prepare_write=Mock(return_value=b'prepared'), write=Mock(), verify=Mock())
         self.plan = {'id': 'fixture-plan', 'date': '2026-10-14', 'url': 'https://garage.example.test', 'created': '2026-10-14',
                      'warnings': [], 'before': self.snapshot, 'after': {}, 'changes': [], 'sources': {}, 'config_digest': digest(self.engine.config())}
         self.plan['checksum'] = digest(self.plan)
@@ -217,10 +217,11 @@ class GoogleWriteGateTests(unittest.TestCase):
         self.assertFalse(self.engine.busy())
 
     def test_google_write_only_after_verified_cloud_backup(self):
-        def write(plan):
+        def write(plan, prepared=None):
             manifest = self.engine.store.copies()[0]
             self.assertEqual(manifest['status'], 'verified')
             self.assertEqual(manifest['cloud_id'], COPY)
+            self.assertEqual(prepared, b'prepared')
         self.adapter.write.side_effect = write
         self.write()
         self.adapter.write.assert_called_once()
@@ -233,6 +234,20 @@ class GoogleWriteGateTests(unittest.TestCase):
         self.adapter.write.assert_not_called()
         self.assertEqual(self.engine.state['phase'], 'error')
         self.assertEqual(self.engine.store.copies()[0]['status'], 'failed')
+
+    def test_preflight_failure_creates_no_backup_and_sends_no_write(self):
+        self.adapter.prepare_write.side_effect = AppError('Объём изменений превышает предел')
+        self.write()
+        self.adapter.write.assert_not_called()
+        self.assertEqual(self.engine.store.copies(), [])
+        self.assertEqual(self.engine.state['phase'], 'error')
+
+    def test_confirmation_required_before_any_preflight_or_backup(self):
+        self.engine.state['phase'] = 'idle'
+        with self.assertRaises(AppError):
+            self.engine.write(self.plan['id'], self.plan['checksum'])
+        self.adapter.prepare_write.assert_not_called()
+        self.assertEqual(self.engine.store.copies(), [])
 
     def test_all_status_checks_include_cloud_folder_but_never_copy(self):
         with patch.object(self.engine, 'check_one') as check:

@@ -1,5 +1,6 @@
 import copy
 import csv
+import json
 import math
 import os
 import re
@@ -15,6 +16,7 @@ SHEETS = [PROSTOI, DRIVERS, TARGET, GARAGE]
 LIVE_ID = '1HzoNqo_7x1RE_4ADegdW46r7qKhUl9xrKi6j1DXEiTQ'
 PROTECTED_ARCHIVE = Path(r'C:\Users\krivov\Desktop\shoko\ScriptExcel')
 MAX_CELLS = 2_000_000
+MAX_GOOGLE_WRITE_BYTES = 12_000_000
 
 
 def scalar(value):
@@ -184,7 +186,10 @@ class LocalTarget:
             raise AppError('Целевая книга изменилась во время чтения. Повторите обновление.')
         return dict(mode='local', target=str(self.path), fingerprint=before_hash, sheets=sheets)
 
-    def write(self, plan):
+    def prepare_write(self, plan):
+        return None
+
+    def write(self, plan, prepared=None):
         workbook = load_workbook(self.path)
         temp = self.path.with_name('.' + self.path.stem + '.' + uuid.uuid4().hex + '.xlsx')
         try:
@@ -274,10 +279,14 @@ class GoogleTarget:
         self.base = 'https://sheets.googleapis.com/v4/spreadsheets/' + self.id
 
     def request(self, method, suffix='', **kwargs):
+        timeout = kwargs.pop('timeout', (10, 45))
         try:
-            response = self.session.request(method, self.base + suffix, timeout=(10, 45), **kwargs)
+            response = self.session.request(method, self.base + suffix, timeout=timeout, **kwargs)
         except Exception as exc:
-            raise AppError(google_request_error(exc)) from None
+            message = google_request_error(exc)
+            if method == 'POST' and 'не ответил вовремя' in message:
+                message = f'Google не подтвердил результат записи вовремя (ожидание до {timeout[1]} секунд). Проверьте таблицу и копию; автоматический повтор не выполняется.'
+            raise AppError(message) from None
         if response.status_code >= 400:
             from .google_errors import http_error
             raise AppError(http_error(response))
@@ -295,7 +304,10 @@ class GoogleTarget:
         meta = self.check()
         titles = {s['properties']['title'] for s in meta.get('sheets', [])}
         names = [name for name in SHEETS if name in titles]
-        data = self.request('GET', params={'includeGridData': 'true', 'ranges': ["'" + name + "'" for name in names]})
+        # Cell formatting can dwarf the actual values by gigabytes. Read only the
+        # values needed for calculation and formulas needed for exact comparison.
+        fields = 'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue))))'
+        data = self.request('GET', params={'ranges': ["'" + name + "'" for name in names], 'fields': fields})
         sheets = {}
         count = 0
         for sheet in data.get('sheets', []):
@@ -319,10 +331,18 @@ class GoogleTarget:
                             matrix[r].extend([''] * max(0, c + 1 - len(matrix[r])))
                             matrix[r][c] = value
             props = sheet['properties']
+            for matrix in (values, raw):
+                for row in matrix:
+                    while row and row[-1] == '':
+                        row.pop()
+                while matrix and not matrix[-1]:
+                    matrix.pop()
             sheets[props['title']] = dict(values=values, raw=raw, rows=props['gridProperties']['rowCount'], cols=props['gridProperties']['columnCount'], id=props['sheetId'])
-        return dict(mode='google', target=self.id, fingerprint=digest(clean_fingerprint(data)), sheets=sheets, metadata=data)
+        # Keep structure of ALL tabs for collision-free IDs, but no duplicate grid.
+        fingerprint = digest({'metadata': meta, 'sheets': {name: {k: v for k, v in item.items() if k != 'values'} for name, item in sheets.items()}})
+        return dict(mode='google', target=self.id, fingerprint=fingerprint, sheets=sheets, metadata=meta)
 
-    def write(self, plan):
+    def prepare_write(self, plan):
         requests = []
         sheet_ids = {name: item['id'] for name, item in plan['before']['sheets'].items()}
         used = set(sheet_ids.values()) | {s['properties']['sheetId'] for s in plan['before'].get('metadata', {}).get('sheets', [])}
@@ -338,11 +358,13 @@ class GoogleTarget:
                 old = plan['before']['sheets'][name]
                 if needed_rows > old['rows'] or needed_cols > old['cols']:
                     requests.append({'updateSheetProperties': {'properties': {'sheetId': old['id'], 'gridProperties': {'rowCount': max(old['rows'], needed_rows), 'columnCount': max(old['cols'], needed_cols)}}, 'fields': 'gridProperties.rowCount,gridProperties.columnCount'}})
-        # Contiguous row patches avoid hundreds of thousands of individual API requests.
+        # Exact rectangles of adjacent changed cells. Never fill holes with a
+        # neighbouring value: untouched cells and their formulas must survive.
         grouped = {}
         for change in plan['changes']:
             grouped.setdefault((change['sheet'], change['row']), []).append(change)
-        for (name, row), changes in grouped.items():
+        blocks = {}
+        for (name, row), changes in sorted(grouped.items()):
             changes.sort(key=lambda x: x['col'])
             groups = []
             for item in changes:
@@ -350,12 +372,26 @@ class GoogleTarget:
                     groups.append([])
                 groups[-1].append(item)
             for group in groups:
-                requests.append({'updateCells': {'start': {'sheetId': sheet_ids[name], 'rowIndex': row - 1, 'columnIndex': group[0]['col'] - 1}, 'rows': [{'values': [{'userEnteredValue': google_value(c['after'])} for c in group]}], 'fields': 'userEnteredValue'}})
+                key = (name, group[0]['col'], len(group))
+                values = {'values': [{'userEnteredValue': google_value(c['after'])} for c in group]}
+                previous = blocks.get(key)
+                if previous and previous['end'] == row - 1:
+                    previous['request']['updateCells']['rows'].append(values)
+                    previous['end'] = row
+                else:
+                    request = {'updateCells': {'start': {'sheetId': sheet_ids[name], 'rowIndex': row - 1, 'columnIndex': group[0]['col'] - 1}, 'rows': [values], 'fields': 'userEnteredValue'}}
+                    requests.append(request)
+                    blocks[key] = {'end': row, 'request': request}
         body = {'requests': requests, 'includeSpreadsheetInResponse': False}
-        if len(__import__('json').dumps(body).encode()) > 12_000_000:
-            raise AppError('План превышает лимит одной записи MVP. Разделение записи пока не поддерживается.')
-        if requests:
-            self.request('POST', ':batchUpdate', json=body)
+        payload = json.dumps(body, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode('utf-8')
+        if len(payload) > MAX_GOOGLE_WRITE_BYTES:
+            raise AppError(f'Объём изменений {len(payload) / 1_000_000:.2f} МБ превышает предел одной атомарной записи (12 МБ). Запись не начата; уменьшите набор данных.')
+        return payload if requests else None
+
+    def write(self, plan, prepared=None):
+        payload = prepared if prepared is not None else self.prepare_write(plan)
+        if payload:
+            self.request('POST', ':batchUpdate', data=payload, headers={'Content-Type': 'application/json; charset=utf-8'}, timeout=(10, 180))
 
     def verify(self, plan):
         result = self.snapshot()

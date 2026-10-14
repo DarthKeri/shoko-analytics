@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 from .storage import AppError, Store, InstanceLock, atomic_json
+from .plans import load_plan, plan_path
 
 
 class Server:
@@ -120,9 +121,9 @@ class Server:
             manifest, payload = engine.store.copy(body.get('id'))
             result = {'manifest': manifest}
             if manifest['run_id']:
-                path = engine.store.root / 'plans' / (manifest['run_id'] + '.json')
+                path = plan_path(engine.store.root, manifest['run_id'])
                 if path.exists():
-                    result['changes'] = json.loads(path.read_text(encoding='utf-8'))['changes'][:100]
+                    result['changes'] = load_plan(engine.store.root, manifest['run_id'])['changes'][:100]
             return result
         if action == 'telegram':
             return engine.telegram_auth(body.get('step'), **body.get('values', {}))
