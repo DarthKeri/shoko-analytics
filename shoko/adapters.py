@@ -261,7 +261,7 @@ class GoogleTarget:
         from google.oauth2.service_account import Credentials
         from google.auth.transport.requests import AuthorizedSession
         try:
-            credentials = Credentials.from_service_account_file(str(path), scopes=['https://www.googleapis.com/auth/spreadsheets'])
+            credentials = Credentials.from_service_account_file(str(path), scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'])
             self.session = AuthorizedSession(credentials)
         except Exception:
             raise AppError('credentials.json не является ключом сервисного аккаунта Google.') from None

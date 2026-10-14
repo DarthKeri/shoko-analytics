@@ -9,6 +9,7 @@ $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $exe
 $shortcut.WorkingDirectory = $projectRoot
+$shortcut.IconLocation = $exe + ',0'
 $shortcut.Description = 'Shoko Analytics'
 $shortcut.Save()
 Write-Host $shortcutPath

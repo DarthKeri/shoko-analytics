@@ -38,7 +38,7 @@ def main():
     try:
         if args.smoke:
             assert engine.public_state()['config'] is not None
-            (root / 'smoke-ok.txt').write_text('Shoko Analytics 0.1.2: assets and backend loaded', encoding='utf-8')
+            (root / 'smoke-ok.txt').write_text('Shoko Analytics 0.2.0: assets and backend loaded', encoding='utf-8')
             return
         server.start()
         if args.browser:
@@ -46,7 +46,10 @@ def main():
             threading.Event().wait()
         else:
             import webview
-            window = webview.create_window('Shoko Analytics', server.url, width=1180, height=850, min_size=(860, 650), background_color='#0d0d0d', confirm_close=False)
+            if os.name == 'nt':
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Shoko.Analytics.Desktop')
+            window = webview.create_window('Shoko Analytics', server.url, width=1120, height=760, min_size=(860, 600), background_color='#0d0d0d', confirm_close=False)
             server.window = window
             def closing():
                 phase = engine.state['phase']
@@ -70,7 +73,7 @@ def main():
                             return
                 finally:
                     window.destroy()
-            webview.start(ui_smoke if args.ui_smoke else None, gui='edgechromium', debug=False, private_mode=True)
+            webview.start(ui_smoke if args.ui_smoke else None, gui='edgechromium', debug=False, private_mode=True, icon=str(assets.parent / 'assets' / 'shoko.ico'))
     finally:
         server.close()
         engine.close()

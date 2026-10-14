@@ -1,7 +1,14 @@
-import React,{useEffect,useRef} from 'react';
+import React,{useEffect,useRef,useId} from 'react';
 import {action} from './api.js';
 
 export function Button({primary=false,children,...props}){return <button type="button" className={'sd-button'+(primary?' sd-primary':'')} {...props}>{children}</button>}
+export function Spinner(){return <span className="sd-spinner" aria-hidden="true"/>}
+export function Activity({label,detail='',elapsed}){return <div className="sd-activity" role="status"><Spinner/><div><strong>{label}</strong>{detail&&<span>{detail}</span>}</div>{elapsed!==undefined&&<small aria-hidden="true">{elapsed} с</small>}<div className="sd-activity-track" aria-hidden="true"><span/></div></div>}
+export function Tabs({label,items,value,onChange,disabled=false}){
+  const id=useId();
+  function keyboard(e,index){let next;if(e.key==='ArrowRight')next=(index+1)%items.length;else if(e.key==='ArrowLeft')next=(index-1+items.length)%items.length;else if(e.key==='Home')next=0;else if(e.key==='End')next=items.length-1;else return;e.preventDefault();onChange(items[next].id);e.currentTarget.parentElement.querySelectorAll('button')[next]?.focus()}
+  return <div className="sd-subnav compact-tabs" role="tablist" aria-label={label}>{items.map((item,index)=><button key={item.id} id={`${id}-${item.id}`} type="button" role="tab" aria-selected={value===item.id} tabIndex={value===item.id?0:-1} disabled={disabled} onKeyDown={e=>keyboard(e,index)} onClick={()=>onChange(item.id)}>{item.label}{item.count!==undefined&&<span className="tab-count">{item.count}</span>}</button>)}</div>;
+}
 export function FileField({label,value,onChange,kind='xlsx',example='',disabled=false,onError}){
   async function choose(){try{const result=await action('choose',{kind});if(result.path)onChange(result.path)}catch(error){onError(error.message)}}
   return <label className="file-field">{label}<div className="file-field-controls"><input type="text" value={value||''} disabled={disabled} onChange={e=>onChange(e.target.value)} placeholder={kind==='folder'?'Путь к папке':'Полный путь к файлу'}/><Button disabled={disabled} onClick={choose}>Выбрать</Button></div>{example&&<span className="sd-field-example">Пример: «{example}»</span>}</label>

@@ -45,7 +45,7 @@ def atomic_json(path, value):
 
 def defaults():
     return dict(initialized=False, prostoi='', drivers='', csv='', target_mode='local', target='',
-                credentials='', allowed_targets=[], developer=False, telegram_mode='manual',
+                credentials='', google_backup_folder='', allowed_targets=[], developer=False, telegram_mode='manual',
                 telegram_bot='', telegram_api_id='', telegram_timeout=120, last_url='', last_date='')
 
 
@@ -87,6 +87,11 @@ class Store:
         for name in ('inputs', 'plans', 'backups', 'logs', 'sessions', 'output'):
             (self.root / name).mkdir(parents=True, exist_ok=True)
         self.mutex = threading.RLock()
+        for path in (self.root / 'backups').glob('*/manifest.json'):
+            previous_copy = json.loads(path.read_text(encoding='utf-8'))
+            if previous_copy.get('kind') == 'google-drive' and previous_copy.get('status') == 'creating':
+                previous_copy.update(status='failed', error='Приложение закрыто во время копирования. Проверьте папку Google Drive; запись не начиналась.')
+                atomic_json(path, previous_copy)
         self.config_path = self.root / 'settings.local.json'
         self.config = defaults()
         if self.config_path.exists():

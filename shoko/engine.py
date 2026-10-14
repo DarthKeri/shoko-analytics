@@ -11,9 +11,10 @@ from .storage import AppError, Store, atomic_json, digest, file_hash, stamp
 from .adapters import readable, read_excel, read_csv, target, guard_target, target_key, changes_for, PROTECTED_ARCHIVE
 from .calculation import assemble_prostoi, calculate, PROSTOI, DRIVERS, TARGET, GARAGE
 from .telegram import Telegram
+from .drive_backup import DriveBackup
 
 STEPS = ['Проверка файлов и доступа', 'Чтение исходных данных', 'Получение CSV', 'Подготовка изменений']
-CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'developer', 'telegram_mode', 'telegram_bot', 'telegram_timeout', 'last_url', 'last_date'}
+CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'developer', 'telegram_mode', 'telegram_bot', 'telegram_timeout', 'last_url', 'last_date'}
 
 
 def resolved(value, processing_date):
@@ -74,6 +75,7 @@ class Engine:
             dependencies = {'prostoi': ('prostoi', 'last_date'), 'drivers': ('drivers', 'last_date'),
                             'target': ('target', 'target_mode', 'credentials', 'allowed_targets'),
                             'credentials': ('credentials',), 'csv': ('csv', 'telegram_mode', 'telegram_bot', 'telegram_timeout')}
+            dependencies['backup'] = ('google_backup_folder', 'target', 'credentials', 'target_mode', 'allowed_targets')
             self.checks = {k: v for k, v in self.checks.items() if not any(previous.get(key) != candidate.get(key) for key in dependencies[k])}
             self.store.log('INFO', 'Настройки сохранены в settings.local.json.')
             return self.public_state()
@@ -133,7 +135,7 @@ class Engine:
                 raise AppError('Уже выполняется операция. Дождитесь её завершения.')
             self.cancelled.clear()
             phase = {'prepare': 'preparing', 'write': 'writing', 'check': 'checking', 'telegram': 'connecting'}[operation]
-            self.state.update(phase=phase, operation=operation, started=stamp(), error='', step=-1)
+            self.state.update(phase=phase, operation=operation, started=stamp(), error='', step=-1, detail='', current_source='')
             def work():
                 try:
                     function()
@@ -185,6 +187,10 @@ class Engine:
                 target(config).check()
             else:
                 target(config).snapshot()
+        elif name == 'backup':
+            if config['target_mode'] != 'google':
+                raise AppError('Для локального Excel копия создаётся в рабочей папке приложения.')
+            DriveBackup(target(config), config).check()
         elif name == 'csv':
             if config['telegram_mode'] == 'auto':
                 self.telegram.call(self.telegram.check(config['telegram_bot']))
@@ -197,9 +203,12 @@ class Engine:
         processing = date.fromisoformat(processing_date or date.today().isoformat())
         config = self.inputs(self.config(), processing)
         names = ['prostoi', 'drivers', 'target', 'csv'] if name == 'all' else [name]
+        if name == 'all' and config['target_mode'] == 'google':
+            names.append('backup')
         def work():
             errors = []
             for item in names:
+                self.set_phase(current_source=item)
                 try:
                     self.check_one(item, config, processing)
                     value = {'ok': True, 'message': 'Доступен', 'checked': stamp(), 'date': processing.isoformat()}
@@ -218,7 +227,7 @@ class Engine:
         processing = date.fromisoformat(processing_date)
         config = self.inputs(self.config(), processing)
         required = [('prostoi', 'Средние цены и простои'), ('drivers', 'Начисления'), ('target', 'Целевая копия')]
-        required += [('credentials', 'Ключ Google')] if config['target_mode'] == 'google' else []
+        required += [('credentials', 'Ключ Google'), ('google_backup_folder', 'Папка копий Google Drive')] if config['target_mode'] == 'google' else []
         required += [('telegram_bot', 'Бот Telegram')] if config['telegram_mode'] == 'auto' else [('csv', 'CSV из бота')]
         missing = [label for key, label in required if not config[key].strip()]
         if missing:
@@ -243,6 +252,8 @@ class Engine:
             for key in ('prostoi', 'drivers'):
                 readable(config[key], {'.xlsx'})
             adapter = target(config)
+            if config['target_mode'] == 'google':
+                DriveBackup(adapter, config).check()
             self.check_cancel()
             source_hashes = {key: file_hash(config[key]) for key in ('prostoi', 'drivers')}
             self.set_phase(step=1)
@@ -312,12 +323,16 @@ class Engine:
             if current['fingerprint'] != approved['before']['fingerprint']:
                 raise AppError('Целевая таблица изменилась после просмотра. Подготовьте новый план.')
             self.set_phase(step=1)
-            backup = self.store.backup_file(current['target'], identity) if current['mode'] == 'local' else self.store.backup_json(current, 'google', current['target'], identity)
+            cloud = DriveBackup(adapter, self.config(), lambda text: self.set_phase(detail=text)) if current['mode'] == 'google' else None
+            backup = cloud.create(self.store, current, identity) if cloud else self.store.backup_file(current['target'], identity)
             self.store.copy(backup['id'])
             self.store.log('INFO', 'Резервная копия сохранена и проверена: ' + backup['id'])
             # Recheck after the potentially slow backup, immediately before writing.
             if adapter.snapshot()['fingerprint'] != current['fingerprint']:
                 raise AppError('Целевая таблица изменилась во время создания копии. Подготовьте новый план.')
+            if cloud and cloud.metadata(cloud.source)['version'] != backup['source_version']:
+                raise AppError('Google-таблица изменилась после создания копии. Подготовьте новый план.')
+            self.set_phase(detail='')
             result = dict(id=identity, created=stamp(), date=approved['date'], status='writing', changes=len(approved['changes']), backup=backup['id'], message='Запись и сверка')
             result_path = self.store.root / 'plans' / (identity + '.result.json')
             atomic_json(result_path, result)

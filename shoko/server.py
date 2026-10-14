@@ -5,6 +5,8 @@ import mimetypes
 import os
 import secrets
 import threading
+import re
+import webbrowser
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -124,6 +126,13 @@ class Server:
             return result
         if action == 'telegram':
             return engine.telegram_auth(body.get('step'), **body.get('values', {}))
+        if action == 'open-cloud-copy':
+            manifest, _ = engine.store.copy(body.get('id'))
+            identity = manifest.get('cloud_id', '')
+            if manifest.get('kind') != 'google-drive' or not re.fullmatch(r'[A-Za-z0-9_-]{10,}', identity):
+                raise AppError('Ссылка на Google-копию не найдена.')
+            webbrowser.open('https://docs.google.com/spreadsheets/d/' + identity + '/edit')
+            return {'opened': True}
         if action == 'choose':
             if not self.window:
                 raise AppError('Выбор файла доступен в окне Windows-приложения. Здесь можно вставить полный путь.')

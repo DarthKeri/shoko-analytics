@@ -67,3 +67,57 @@ html,body,#root{margin:0;min-height:100%;background:#0d0d0d;color:#ececec}body{f
 #shoko-dark .settings-check{display:flex;flex-direction:column;gap:5px;padding:10px 14px;border-left:2px solid #ccc;background:#191919;color:#eee;white-space:pre-line;overflow-wrap:anywhere}
 #shoko-dark .settings-check small{font-size:12px;color:#aaa}
 #shoko-dark .settings-page>.sd-footer .sd-actions{flex-wrap:wrap;gap:12px}
+
+/* A single bounded application window; long pages scroll inside main. */
+html,body,#root{height:100%;min-height:0;overflow:hidden}
+#shoko-dark{height:100%;min-height:0;border-radius:0}
+#shoko-dark .sd-shell{height:100%;min-height:0;grid-template-columns:210px minmax(0,1fr)}
+#shoko-dark aside{height:100%;min-height:0;overflow-y:auto;position:static}
+#shoko-dark main{height:100%;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding:20px 32px 24px;overscroll-behavior:contain}
+#shoko-dark main>.sd-route-controls{flex-shrink:0;margin-bottom:18px}
+#shoko-dark .sd-page{flex:1 0 auto;min-height:0}
+#shoko-dark .sd-activity{position:relative;display:flex;align-items:center;flex-shrink:0;gap:13px;padding:14px 16px 17px;margin:0 0 20px;background:#191919;border:1px solid #414141;border-radius:8px;overflow:hidden}
+#shoko-dark .sd-activity>div:not(.sd-activity-track){display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
+#shoko-dark .sd-activity strong{font-size:14px;font-weight:600}
+#shoko-dark .sd-activity span:not(.sd-spinner){font-size:12px;color:#bfbfbf}
+#shoko-dark .sd-activity small{white-space:nowrap;color:#c8c8c8;font-variant-numeric:tabular-nums}
+#shoko-dark .sd-activity-track{position:absolute;bottom:0;left:0;right:0;height:2px;background:#303030}
+#shoko-dark .sd-activity-track span{display:block;width:35%;height:100%;background:#dedede;animation:activity-slide 1.8s ease-in-out infinite}
+#shoko-dark .sd-spinner{display:inline-block;width:17px;height:17px;border:2px solid #626262;border-top-color:#fff;border-radius:50%;animation:activity-spin .8s linear infinite;flex-shrink:0;vertical-align:middle}
+#shoko-dark .sd-step span:last-child{display:flex;gap:9px;align-items:center}
+#shoko-dark .compact-tabs{flex-shrink:0}
+#shoko-dark [role=tablist].compact-tabs button{width:auto;min-width:0;font-size:14px;min-height:40px;padding:9px 12px;white-space:nowrap}
+#shoko-dark .tab-count{display:inline-block;margin-left:8px;padding:0 6px;min-width:19px;background:#3c3c3c;border-radius:12px;font-size:11px;color:#ddd}
+#shoko-dark .settings-page{max-width:900px;width:100%;align-self:center}
+#shoko-dark .settings-group{border:1px solid #303030;border-radius:9px;padding:20px;margin:0 0 18px;gap:10px;background:#101010}
+#shoko-dark .settings-group h3{font-size:16px;margin:0 0 2px}
+#shoko-dark .settings-group label{font-size:13px;margin-top:6px}
+#shoko-dark .settings-group>.sd-button{padding:4px 0;min-height:30px;font-size:13px}
+#shoko-dark .settings-group p.settings-hint,#shoko-dark .settings-hint{font-size:13px;line-height:1.6;margin:0 0 9px}
+#shoko-dark .sd-field-example{font-size:12px;margin-top:5px}
+#shoko-dark .settings-group .file-field+.sd-button{margin-bottom:6px}
+#shoko-dark .settings-subgroup{display:flex;flex-direction:column;gap:10px;border-top:1px solid #343434;padding-top:18px;margin-top:10px}
+#shoko-dark .settings-subgroup>.sd-button{align-self:flex-start;padding-left:0;font-size:13px}
+#shoko-dark .settings-footer{position:sticky;bottom:-24px;z-index:2;background:#0d0d0d;border-top:1px solid #353535;padding:16px 0 20px;margin-top:auto;gap:10px;display:flex;align-items:center;justify-content:space-between}
+#shoko-dark .settings-feedback{margin:0;max-width:360px;font-size:12px;color:#aaa}
+#shoko-dark .settings-check{padding:8px 11px;font-size:12px;border-radius:0 5px 5px 0}
+#shoko-dark .settings-check .sd-spinner{width:13px;height:13px;margin-right:5px}
+#shoko-dark .settings-check small{font-size:11px}
+#shoko-dark .sd-setting{padding:4px 0;border:0}
+#shoko-dark .copy-actions{display:flex;align-items:flex-start;flex-direction:column;gap:0}
+#shoko-dark .copy-actions .sd-button{font-size:12px;padding:5px 0;min-height:30px;white-space:normal;text-align:left}
+#shoko-dark .copies-page td:first-child{min-width:120px;font-size:12px;color:#bcbcbc}
+#shoko-dark .sd-empty{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;min-height:200px;border:1px dashed #393939;border-radius:8px;margin-top:12px;padding:24px;text-align:center}
+#shoko-dark .sd-empty>span{font-size:16px;color:#dedede}
+#shoko-dark .sd-empty p{font-size:13px;color:#aaa;margin:0;max-width:390px}
+#shoko-dark .sd-dialog{max-height:calc(100dvh - 64px)}
+#shoko-dark .sd-modal{padding:32px 18px}
+#shoko-dark .sd-log{resize:none;height:38vh;min-height:180px}
+@keyframes activity-spin{to{transform:rotate(360deg)}}
+@keyframes activity-slide{0%{transform:translateX(-110%)}100%{transform:translateX(390%)}}
+@media(prefers-reduced-motion:reduce){#shoko-dark .sd-spinner,#shoko-dark .sd-activity-track span{animation:none}#shoko-dark .sd-activity-track span{width:100%;opacity:.65}}
+@media(max-width:1000px){#shoko-dark .sd-shell{grid-template-columns:185px minmax(0,1fr)}#shoko-dark main{padding-left:24px;padding-right:24px}#shoko-dark .settings-footer{align-items:flex-start;flex-direction:column}}
+@media(max-width:600px){#shoko-dark .sd-shell{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}#shoko-dark aside{height:auto;overflow:visible;padding:12px 10px;gap:2px}#shoko-dark .sd-brand{width:100%;padding:0 6px 6px}#shoko-dark .sd-nav{padding:7px;font-size:11px;gap:5px}#shoko-dark .sd-nav svg{width:15px;height:15px}#shoko-dark main{padding:16px}#shoko-dark .settings-group{padding:14px}#shoko-dark .settings-footer{bottom:-16px;padding-bottom:16px}#shoko-dark [role=tablist].compact-tabs{flex-wrap:wrap}#shoko-dark [role=tablist].compact-tabs button{font-size:12px;padding:8px;flex:1 1 auto}#shoko-dark .tab-count{margin-left:4px}#shoko-dark .sd-activity{padding:12px;gap:9px}#shoko-dark .settings-feedback{max-width:none}}
+#shoko-dark main>.sd-activity{position:sticky;top:0;z-index:4;box-shadow:0 -20px 0 0 #0d0d0d}
+#shoko-dark [data-screen=update]>.sd-footer,#shoko-dark .preview-page>.sd-footer{position:sticky;bottom:-24px;background:#0d0d0d;z-index:2;padding-bottom:20px}
+@media(max-width:600px){#shoko-dark [data-screen=update]>.sd-footer,#shoko-dark .preview-page>.sd-footer{bottom:-16px}}
