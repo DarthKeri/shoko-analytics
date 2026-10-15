@@ -3,7 +3,7 @@ import subprocess
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from requests.exceptions import SSLError, ReadTimeout, ConnectTimeout, ConnectionError
 from google.auth.exceptions import TransportError, RefreshError
 from urllib3.exceptions import ProtocolError
@@ -13,6 +13,11 @@ from shoko.calculation import TARGET
 
 
 class GoogleTransportTests(unittest.TestCase):
+    def setUp(self):
+        sleeper = patch('shoko.adapters.time.sleep')
+        self.sleep = sleeper.start()
+        self.addCleanup(sleeper.stop)
+
     def adapter(self, error):
         adapter = object.__new__(GoogleTarget)
         adapter.base = 'https://sheets.googleapis.com/v4/spreadsheets/test-copy'
@@ -81,6 +86,46 @@ class GoogleTransportTests(unittest.TestCase):
             adapter.request('GET')
         self.assertIn('не ответил вовремя', str(caught.exception))
         self.assertNotIn('secret', str(caught.exception))
+
+    def test_transient_get_retries_then_succeeds_without_leaking_error_text(self):
+        adapter = self.adapter(None)
+        response = SimpleNamespace(status_code=200, json=lambda: {'ok': True})
+        adapter.session.request.side_effect = [ReadTimeout('fixture-secret'), ConnectionError('fixture-secret'), response]
+        adapter.report = Mock()
+        self.assertEqual(adapter.request('GET'), {'ok': True})
+        self.assertEqual(adapter.session.request.call_count, 3)
+        self.assertEqual([c.args[0] for c in self.sleep.call_args_list], [1, 2])
+        self.assertEqual(adapter.report.call_count, 2)
+        self.assertNotIn('fixture-secret', str(adapter.report.call_args_list))
+
+    def test_get_failure_stops_after_three_attempts(self):
+        adapter = self.adapter(ReadTimeout('private-url'))
+        with self.assertRaises(AppError):
+            adapter.request('GET')
+        self.assertEqual(adapter.session.request.call_count, 3)
+        self.assertEqual(self.sleep.call_count, 2)
+
+    def test_invalid_certificate_and_authorization_are_never_retried(self):
+        for failure in (SSLError('private-url'), RefreshError('private-token')):
+            adapter = self.adapter(failure)
+            with self.assertRaises(AppError):
+                adapter.request('GET')
+            adapter.session.request.assert_called_once()
+        self.sleep.assert_not_called()
+
+    def test_drive_get_retries_but_copy_post_never_repeats(self):
+        from shoko.drive_backup import DriveBackup
+        backup = object.__new__(DriveBackup)
+        backup.report = Mock()
+        response = SimpleNamespace(status_code=200, json=lambda: {'id': 'fixture'})
+        backup.session = SimpleNamespace(request=Mock(side_effect=[ReadTimeout('private'), response]))
+        self.assertEqual(backup.request('GET', 'https://www.googleapis.com/drive/v3/files/fixture'), {'id': 'fixture'})
+        self.assertEqual(backup.session.request.call_count, 2)
+        backup.session.request = Mock(side_effect=ReadTimeout('private'))
+        with self.assertRaises(AppError):
+            backup.request('POST', 'https://www.googleapis.com/drive/v3/files/fixture/copy')
+        backup.session.request.assert_called_once()
+        self.assertEqual(backup.session.request.call_args.kwargs['timeout'], (45, 180))
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows system trust integration')
     def test_windows_entrypoint_keeps_tls_verification(self):

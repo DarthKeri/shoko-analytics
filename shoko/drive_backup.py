@@ -4,13 +4,14 @@ import re
 from collections import Counter
 from datetime import datetime
 from urllib.parse import urlparse
-from .adapters import google_request_error
+from .adapters import google_request_error, google_http_request, google_transport_code
 from .storage import AppError, atomic_json, digest, stamp
 from .google_errors import http_error
 
 DRIVE = 'https://www.googleapis.com/drive/v3/files/'
 SHEETS = 'https://sheets.googleapis.com/v4/spreadsheets/'
 SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
+COPY_TIMEOUT = (45, 180)
 FILE_FIELDS = 'id,name,mimeType,parents,driveId,trashed,version,appProperties,capabilities(canCopy,canAddChildren)'
 
 
@@ -38,12 +39,20 @@ class DriveBackup:
         self.session = adapter.session
         self.folder = folder_id(config.get('google_backup_folder'))
         self.progress = progress
+        self.report = getattr(adapter, 'report', progress)
 
     def request(self, method, url, **kwargs):
+        copying = method == 'POST' and url.endswith('/copy')
+        timeout = COPY_TIMEOUT if copying else (10, 45)
         try:
-            response = self.session.request(method, url, timeout=(10, 45), **kwargs)
+            response = google_http_request(self.session, method, url, timeout=timeout, report=self.report, **kwargs)
         except Exception as exc:
-            raise AppError(google_request_error(exc)) from None
+            message = google_request_error(exc)
+            if copying:
+                message = ('Google не подтвердил создание копии (ожидание ответа до 180 секунд). '
+                           'Копия могла быть создана в папке Drive; запись в исходную таблицу не начата. '
+                           'Автоматический повтор создания копии не выполняется.')
+            raise AppError(message + ' Код: ' + google_transport_code(exc) + '.') from None
         if response.status_code >= 400:
             # Never expose raw response bodies, JWTs, keys or document contents.
             raise AppError(http_error(response))

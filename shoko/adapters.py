@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+import time
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -47,6 +48,25 @@ def google_transport_code(exc):
         if part not in parts:
             parts.append(part)
     return ' / '.join(parts)
+
+
+def google_http_request(session, method, url, timeout=(10, 45), report=lambda text: None, **kwargs):
+    """Retry only transient GET failures. Never replay any mutating request."""
+    from requests.exceptions import ConnectionError, Timeout, SSLError
+    attempts = 3 if method.upper() == 'GET' else 1
+    for attempt in range(attempts):
+        try:
+            return session.request(method, url, timeout=timeout, **kwargs)
+        except Exception as exc:
+            chain = list(google_exception_chain(exc))
+            transient = (any(isinstance(item, (ConnectionError, Timeout, TimeoutError)) for item in chain)
+                         and not any(isinstance(item, SSLError) for item in chain))
+            if attempt + 1 == attempts or not transient:
+                raise
+            delay = 2 ** attempt
+            report(f'Google: временная ошибка чтения. Повтор {attempt + 2} из {attempts} через {delay} с. '
+                   f'Код: {google_transport_code(exc)}.')
+            time.sleep(delay)
 
 
 def scalar(value):
@@ -166,6 +186,10 @@ def equivalent(first, second):
         first = ''
     if second is None:
         second = ''
+    # Google and Excel may return 0 as either int or float. They are the same
+    # spreadsheet number; bool and text must remain distinct from numbers.
+    if type(first) in (int, float) and type(second) in (int, float):
+        return first == second
     return type(first) == type(second) and first == second
 
 
@@ -333,6 +357,8 @@ def google_request_error(exc):
 class GoogleTarget:
     def __init__(self, config, google_auth=None):
         self.id = guard_target(config)
+        logger = getattr(getattr(google_auth, 'store', None), 'log', None)
+        self.report = (lambda message: logger('WARNING', message)) if logger else (lambda message: None)
         if config.get('google_auth_mode', 'service_account') == 'oauth':
             if google_auth is None:
                 raise AppError('Вход Google недоступен. Перезапустите приложение и подключите аккаунт в настройках.')
@@ -352,7 +378,8 @@ class GoogleTarget:
     def request(self, method, suffix='', **kwargs):
         timeout = kwargs.pop('timeout', (10, 45))
         try:
-            response = self.session.request(method, self.base + suffix, timeout=timeout, **kwargs)
+            response = google_http_request(self.session, method, self.base + suffix, timeout=timeout,
+                                           report=getattr(self, 'report', lambda text: None), **kwargs)
         except Exception as exc:
             message = google_request_error(exc)
             if method == 'POST' and suffix == ':batchUpdate':

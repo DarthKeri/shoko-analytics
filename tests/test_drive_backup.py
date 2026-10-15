@@ -156,8 +156,11 @@ class DriveBackupTests(unittest.TestCase):
 
     def test_unknown_post_timeout_is_never_retried(self):
         self.fixture.copy_timeout = True
-        with self.assertRaisesRegex(AppError, 'не ответил вовремя'):
+        with self.assertRaisesRegex(AppError, 'не подтвердил создание копии') as caught:
             self.create()
+        self.assertIn('180 секунд', str(caught.exception))
+        self.assertIn('Копия могла быть создана', str(caught.exception))
+        self.assertIn('Автоматический повтор', str(caught.exception))
         self.assertEqual(len(self.fixture.posts), 1)
         self.assertNotIn('sensitive', self.store.copies()[0]['error'])
         self.assertEqual(self.store.copies()[0]['status'], 'failed')

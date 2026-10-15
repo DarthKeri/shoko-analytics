@@ -68,11 +68,12 @@ def format_source(value, column, percent_columns, data_row=False):
 
 def assemble_prostoi(current, previous, existing, processing_date):
     result = [] if processing_date.day >= 15 else copy.deepcopy(existing)
-    percent_columns = {i + 1 for row in existing[1:3] for i, val in enumerate(row) if val in ('%', '% НВ')}
+    segments = []
     def paste(rows, start, begin, end):
+        segments.append((rows, start, begin, end))
         for r, row in enumerate(rows[:373]):
             for i, value in enumerate(row[begin:end]):
-                set_cell(result, r, start + i, format_source(value, start + i + 1, percent_columns, year_value(cell(row, 1)) is not None))
+                set_cell(result, r, start + i, value)
     if processing_date.day >= 15:
         paste(current, 0, 0, 292)
     else:
@@ -84,6 +85,15 @@ def assemble_prostoi(current, previous, existing, processing_date):
         paste(previous, 12, begin, end)
         paste(current, 0, 0, 12)
         paste(current, 147, 12, {31: 291, 30: 282, 29: 264, 28: 264}[days])
+    # Determine the column types from the header we are about to publish, after
+    # applying the same month slices as the data. The old target header changes
+    # after the first run and must not change how identical inputs are interpreted.
+    percent_columns = {i + 1 for row in result[1:3] for i, val in enumerate(row)
+                       if isinstance(val, str) and val.strip() in ('%', '% НВ')}
+    for rows, start, begin, end in segments:
+        for r, row in enumerate(rows[:373]):
+            for i, value in enumerate(row[begin:end]):
+                set_cell(result, r, start + i, format_source(value, start + i + 1, percent_columns, year_value(cell(row, 1)) is not None))
     return result
 
 
