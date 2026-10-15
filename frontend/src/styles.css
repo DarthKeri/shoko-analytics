@@ -139,3 +139,9 @@ html,body,#root{height:100%;min-height:0;overflow:hidden}
 /* Review the entire Garage operation before the existing write confirmation. */
 #shoko-dark .garage-review{border:1px solid var(--sd-line);border-radius:8px;padding:12px 16px;margin:12px 0;background:var(--sd-input);overflow-wrap:anywhere}
 #shoko-dark .garage-review p{margin:7px 0;font-size:13px;line-height:1.5}
+
+/* Keep dated validation details readable beside each source. */
+#shoko-dark [data-screen=update] .sd-source{grid-template-columns:minmax(0,1fr) auto}
+#shoko-dark [data-screen=update] .sd-source-state{grid-column:1;align-items:flex-start;overflow-wrap:anywhere;min-width:0}
+#shoko-dark [data-screen=update] .sd-source .sd-button{grid-column:2;grid-row:1 / span 2}
+#shoko-dark [data-screen=update] .sd-source-state .sd-mark{flex-shrink:0}

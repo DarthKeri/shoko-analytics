@@ -132,14 +132,30 @@ def date_columns(matrix, processing_date):
     return positions
 
 
-def driver_counts(rows):
+def driver_columns(rows):
+    headers = [str(v).strip() for v in rows[0]] if rows else []
+    discounts = [i for i, v in enumerate(headers) if v == 'Скидка/наценка']
+    years = [i for i, v in enumerate(headers) if v in ('Год ПТС', 'год ПТС', 'год')]
+    missing = []
+    if not discounts:
+        missing.append('«Скидка/наценка»')
+    if not years:
+        missing.append('«Год ПТС»')
+    # The primary legacy mapping reads the car model from W, with the Toyota
+    # override in AM. Do not silently accept a shifted or unrelated export.
+    if str(cell(headers, 22)).casefold() not in ('марка', 'автомобиль'):
+        missing.append('«марка» / «Автомобиль» в столбце W')
+    if missing:
+        raise AppError('Отсутствуют обязательные колонки: ' + ', '.join(missing) + '.')
+    if len(discounts) != 1 or len(years) != 1:
+        raise AppError('Заголовки «Скидка/наценка» и «Год ПТС» должны встречаться по одному разу.')
     if len(rows) < 2:
-        raise AppError('Лист начислений пуст.')
-    headers = [str(v).strip() for v in rows[0]]
-    if 'Скидка/наценка' not in headers:
-        raise AppError('В начислениях отсутствует колонка «Скидка/наценка».')
-    discount_col = headers.index('Скидка/наценка')
-    year_col = next((i for i, v in enumerate(headers) if v in ('Год ПТС', 'год ПТС', 'год')), 38)
+        raise AppError('Есть заголовки, но нет строк начислений.')
+    return discounts[0], years[0]
+
+
+def driver_counts(rows):
+    discount_col, year_col = driver_columns(rows)
     result, unknown = {}, set()
     for row in rows[1:]:
         am = str(cell(row, 38))

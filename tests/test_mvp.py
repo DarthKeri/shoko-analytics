@@ -212,11 +212,11 @@ class RulesTests(unittest.TestCase):
 
     def test_unambiguous_model_case_and_spacing_are_normalized(self):
         row = ['']*39; row[0] = 2019; row[1] = -100; row[22] = 'SKODA  OCTAVIA №001'
-        self.assertEqual(driver_counts([['Год ПТС','Скидка/наценка'],row]), {('Skoda Octavia',2019):1})
+        self.assertEqual(driver_counts([['Год ПТС','Скидка/наценка'] + [''] * 20 + ['марка'],row]), {('Skoda Octavia',2019):1})
 
     def test_unknown_discounted_model_requires_mapping(self):
         row=['']*39;row[0]=2020;row[1]=-100;row[22]='Unknown'
-        with self.assertRaises(AppError):driver_counts([['Год ПТС','Скидка/наценка'],row])
+        with self.assertRaises(AppError):driver_counts([['Год ПТС','Скидка/наценка'] + [''] * 20 + ['марка'],row])
 
     def test_csv_structure_errors(self):
         with tempfile.TemporaryDirectory() as folder:

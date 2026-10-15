@@ -11,7 +11,7 @@ from datetime import date, datetime
 from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
-from .calculation import PROSTOI, DRIVERS, TARGET, GARAGE
+from .calculation import PROSTOI, DRIVERS, TARGET, GARAGE, driver_counts, cell
 from .storage import AppError, digest, file_hash
 from .garage import managed_names, comparison_before, formula_text
 
@@ -129,6 +129,20 @@ def read_excel(path, sheet, row_limit=100_000, col_limit=500):
         raise AppError(f'Нет доступа к {path.name}.') from None
     except Exception:
         raise AppError(f'Не удалось прочитать {path.name}. Проверьте формат XLSX и сохраните файл в Excel.') from None
+
+
+def read_driver_excel(path, source_date):
+    """Read and validate the exact daily source used by both status and prepare."""
+    sheet = f'{source_date.day:02d}'
+    context = f'Начисления за {source_date:%d.%m.%Y} (файл «{Path(path).name}», лист «{sheet}»)'
+    try:
+        rows = read_excel(path, sheet, 100_000, 50)
+        driver_counts(rows)
+        if not any(str(cell(row, 22)).strip() or 'Toyota' in str(cell(row, 38)) for row in rows[1:]):
+            raise AppError('Есть заголовки, но нет строк с автомобилями.')
+    except AppError as exc:
+        raise AppError(f'{context}: {exc} Проверьте путь и выгрузите начисления за указанную дату.') from None
+    return rows
 
 
 def read_csv(path):

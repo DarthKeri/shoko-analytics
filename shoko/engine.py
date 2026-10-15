@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 from .storage import AppError, Store, atomic_json, digest, file_hash, stamp
-from .adapters import readable, read_excel, read_csv, target, guard_target, target_key, changes_for, normalize_merged_output, PROTECTED_ARCHIVE
+from .adapters import readable, read_excel, read_driver_excel, read_csv, target, guard_target, target_key, changes_for, normalize_merged_output, PROTECTED_ARCHIVE
 from .calculation import assemble_prostoi, calculate, PROSTOI, DRIVERS, TARGET, GARAGE
 from .telegram import Telegram
 from .drive_backup import DriveBackup
@@ -189,7 +189,10 @@ class Engine:
                 previous = processing_date.replace(day=1) - timedelta(days=1)
                 read_excel(config['prostoi'], f'Кол_состав_{previous:%m-%y}', 373, 345)
         elif name == 'drivers':
-            read_excel(config['drivers'], f'{(processing_date - timedelta(days=1)).day:02d}', 100_000, 50)
+            source_date = processing_date - timedelta(days=1)
+            read_driver_excel(config['drivers'], source_date)
+            return (f'Начисления за {source_date:%d.%m.%Y}: лист «{source_date.day:02d}», '
+                    'обязательные колонки и данные проверены.')
         elif name == 'credentials':
             if config.get('google_auth_mode') == 'oauth':
                 client_config(config.get('google_oauth_client', ''))
@@ -230,9 +233,10 @@ class Engine:
             for item in names:
                 self.set_phase(current_source=item)
                 try:
-                    self.check_one(item, config, processing)
-                    value = {'ok': True, 'message': 'Доступен', 'checked': stamp(), 'date': processing.isoformat()}
-                    self.store.log('INFO', f'Проверка источника {item}: доступен. Запись не выполнялась.')
+                    detail = self.check_one(item, config, processing)
+                    message = detail if isinstance(detail, str) and detail else 'Доступен'
+                    value = {'ok': True, 'message': message, 'checked': stamp(), 'date': processing.isoformat()}
+                    self.store.log('INFO', f'Проверка источника {item}: {message} Запись не выполнялась.')
                 except Exception as exc:
                     message = str(exc) if isinstance(exc, AppError) else 'Источник недоступен. Проверьте настройки.'
                     value = {'ok': False, 'message': message, 'checked': stamp(), 'date': processing.isoformat()}
@@ -284,7 +288,7 @@ class Engine:
             if processing.day < 15:
                 last_month = processing.replace(day=1) - timedelta(days=1)
                 previous = read_excel(config['prostoi'], f'Кол_состав_{last_month:%m-%y}', 373, 345)
-            drivers = read_excel(config['drivers'], f'{(processing - timedelta(days=1)).day:02d}', 100_000, 50)
+            drivers = read_driver_excel(config['drivers'], processing - timedelta(days=1))
             self.check_cancel()
             self.set_phase(step=2)
             if config['telegram_mode'] == 'auto':

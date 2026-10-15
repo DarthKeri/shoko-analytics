@@ -57,7 +57,7 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
     const result=data.checks[source];
     const dependencies={prostoi:['prostoi','last_date'],drivers:['drivers','last_date'],target:['target','target_mode','credentials'],credentials:['credentials'],backup:['google_backup_folder','target','credentials'],csv:['csv','telegram_mode','telegram_bot','telegram_timeout']};
     for(const key of ['target','credentials','backup'])dependencies[key].push('google_auth_mode','google_oauth_client');
-    const edited=dependencies[source].some(key=>form[key]!==data.config[key]);
+    const edited=dependencies[source].some(key=>form[key]!==data.config[key])||(['prostoi','drivers'].includes(source)&&result?.date!==(form.last_date||today()));
     const running=checking===source&&data.state.phase==='checking';
     if(!running&&(!result||edited))return null;
     return <div className="settings-check" role="status" aria-live="polite" data-source={source}>{running?<span><Spinner/> Проверка…</span>:<><span>{result.ok?'✓':'✕'} {result.message}</span><small>{timeText(result.checked)}</small></>}</div>;
@@ -80,7 +80,7 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
       <Button disabled={busy} onClick={()=>check('prostoi')}>Проверить простои</Button>{status('prostoi')}
       {field('Начисления','drivers','xlsx','Начисление_10-26.xlsx')}
       <Button disabled={busy} onClick={()=>check('drivers')}>Проверить начисления</Button>{status('drivers')}
-      <label>Дата обработки<input type="date" value={form.last_date||''} disabled={busy} onInput={e=>set('last_date',e.target.value)}/></label></div>}
+      <label>Дата обработки<input type="date" value={form.last_date||''} disabled={busy} onInput={e=>set('last_date',e.target.value)}/></label><p className="sd-muted settings-hint">Начисления проверяются за предыдущий день относительно даты обработки. Например, для 15 октября нужен лист «14».</p></div>}
     {visible(2)&&<div className="settings-group"><h3>Целевая копия</h3>
       <label>Расположение таблицы<select value={form.target_mode} onChange={e=>set('target_mode',e.target.value)} disabled={busy}><option value="local">Локальная книга Excel</option><option value="google">Google Sheets</option></select></label>
       {form.target_mode==='local'?<>{field('Копия книги с листом «Предложение цен»','target','xlsx','Анализ_конкурентов_копия.xlsx')}<Button disabled={busy} onClick={createCopy}>Создать копию из шаблона</Button></>:<>
