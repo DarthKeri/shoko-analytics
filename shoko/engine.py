@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 from .storage import AppError, Store, atomic_json, digest, file_hash, stamp
-from .adapters import readable, read_excel, read_csv, target, guard_target, target_key, changes_for, PROTECTED_ARCHIVE
+from .adapters import readable, read_excel, read_csv, target, guard_target, target_key, changes_for, normalize_merged_output, PROTECTED_ARCHIVE
 from .calculation import assemble_prostoi, calculate, PROSTOI, DRIVERS, TARGET, GARAGE
 from .telegram import Telegram
 from .drive_backup import DriveBackup
@@ -293,6 +293,8 @@ class Engine:
             prostoi = assemble_prostoi(current, previous, before['sheets'].get(PROSTOI, {}).get('values', []), processing)
             prices, warnings = calculate(prostoi, drivers, before['sheets'][TARGET]['values'], processing)
             after = {PROSTOI: prostoi, DRIVERS: drivers, TARGET: prices, GARAGE: garage}
+            after, merge_warnings = normalize_merged_output(before, after)
+            warnings.extend(merge_warnings)
             changes = changes_for(before, after)
             self.check_cancel()
             sources = {key: {'path': config[key], 'sha256': hash_value} for key, hash_value in source_hashes.items()}

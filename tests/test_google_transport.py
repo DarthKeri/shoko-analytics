@@ -42,7 +42,7 @@ class GoogleTransportTests(unittest.TestCase):
         adapter.session.request.assert_called_once()
         call = adapter.session.request.call_args
         self.assertEqual(call.args[0], 'GET')
-        self.assertEqual(call.kwargs['params'], {'includeGridData': 'false', 'fields': 'spreadsheetId,sheets(properties)'})
+        self.assertEqual(call.kwargs['params'], {'includeGridData': 'false', 'fields': 'spreadsheetId,sheets(properties,merges)'})
 
     def test_status_rejects_missing_required_sheet(self):
         adapter = self.adapter(None)

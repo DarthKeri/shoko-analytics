@@ -188,6 +188,50 @@ def changes_for(before, after):
     return changes
 
 
+def merged_follower(merge, row, col):
+    """Coordinates are zero-based; the top-left cell retains its value."""
+    top, left = merge.get('startRowIndex', 0), merge.get('startColumnIndex', 0)
+    return (top <= row < merge['endRowIndex'] and left <= col < merge['endColumnIndex']
+            and (row, col) != (top, left))
+
+
+def normalize_merged_output(before, after):
+    """Remove only empty/zero placeholders before review, never meaningful data.
+
+    Google stores a merged range's value at its top-left cell. The legacy
+    rectangular arrays can contain synthetic zeros at the other coordinates.
+    Preserve the layout and warn explicitly; block any meaningful conflict.
+    """
+    normalized, warnings = dict(after), []
+    for name, rows in after.items():
+        merges = before['sheets'].get(name, {}).get('merges', [])
+        if not merges:
+            continue
+        count, copied = 0, set()
+        for merge in merges:
+            for r in range(merge.get('startRowIndex', 0), min(merge['endRowIndex'], len(rows))):
+                for c in range(merge.get('startColumnIndex', 0), min(merge['endColumnIndex'], len(rows[r]))):
+                    if not merged_follower(merge, r, c) or rows[r][c] == '':
+                        continue
+                    value = rows[r][c]
+                    zero = (type(value) in (int, float) and value == 0) or (type(value) is str and value in ('0', '0.0%'))
+                    if not zero:
+                        address = f'{get_column_letter(c + 1)}{r + 1}'
+                        raise AppError(f'Лист «{name}», {address}: непустые данные попадают внутрь объединённой области. '
+                                       'Проверьте структуру тестовой таблицы и исходные файлы. Запись не начата.')
+                    if normalized[name] is rows:
+                        normalized[name] = list(rows)
+                    if r not in copied:
+                        normalized[name][r] = list(rows[r])
+                        copied.add(r)
+                    normalized[name][r][c] = ''
+                    count += 1
+        if count:
+            warnings.append(f'«{name}»: {count} служебных нулей внутри объединённых ячеек исключены из плана; '
+                            'значения верхних левых ячеек и объединения сохранены.')
+    return normalized, warnings
+
+
 class LocalTarget:
     def __init__(self, config):
         self.path = readable(guard_target(config), {'.xlsx'})
@@ -325,7 +369,7 @@ class GoogleTarget:
 
     def check(self):
         # Status only verifies access and the required sheet, without downloading cells.
-        meta = self.request('GET', params={'includeGridData': 'false', 'fields': 'spreadsheetId,sheets(properties)'})
+        meta = self.request('GET', params={'includeGridData': 'false', 'fields': 'spreadsheetId,sheets(properties,merges)'})
         titles = {s['properties']['title'] for s in meta.get('sheets', [])}
         if TARGET not in titles:
             raise AppError(f'В Google-таблице нет листа «{TARGET}».')
@@ -335,6 +379,7 @@ class GoogleTarget:
         meta = self.check()
         titles = {s['properties']['title'] for s in meta.get('sheets', [])}
         names = [name for name in SHEETS if name in titles]
+        merges = {s['properties']['title']: s.get('merges', []) for s in meta.get('sheets', [])}
         # Cell formatting can dwarf the actual values by gigabytes. Read only the
         # values needed for calculation and formulas needed for exact comparison.
         fields = 'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue))))'
@@ -368,7 +413,7 @@ class GoogleTarget:
                         row.pop()
                 while matrix and not matrix[-1]:
                     matrix.pop()
-            sheets[props['title']] = dict(values=values, raw=raw, rows=props['gridProperties']['rowCount'], cols=props['gridProperties']['columnCount'], id=props['sheetId'])
+            sheets[props['title']] = dict(values=values, raw=raw, rows=props['gridProperties']['rowCount'], cols=props['gridProperties']['columnCount'], id=props['sheetId'], merges=merges.get(props['title'], []))
         # Keep structure of ALL tabs for collision-free IDs, but no duplicate grid.
         fingerprint = digest({'metadata': meta, 'sheets': {name: {k: v for k, v in item.items() if k != 'values'} for name, item in sheets.items()}})
         return dict(mode='google', target=self.id, fingerprint=fingerprint, sheets=sheets, metadata=meta)
@@ -396,6 +441,12 @@ class GoogleTarget:
             grouped.setdefault((change['sheet'], change['row']), []).append(change)
         blocks = {}
         for (name, row), changes in sorted(grouped.items()):
+            # Never silently filter an already-reviewed plan at write time.
+            merges = [m for m in plan['before']['sheets'].get(name, {}).get('merges', [])
+                      if m.get('startRowIndex', 0) <= row - 1 < m['endRowIndex']]
+            if any(merged_follower(m, row - 1, change['col'] - 1) for m in merges for change in changes):
+                raise AppError(f'Лист «{name}»: план содержит запись внутрь объединённой ячейки. '
+                               'Подготовьте новый план. Запись не начата.')
             changes.sort(key=lambda x: x['col'])
             groups = []
             for item in changes:
@@ -439,11 +490,17 @@ class GoogleTarget:
 
     def verify(self, plan):
         result = self.snapshot()
+        for name in plan['after']:
+            if name not in result['sheets']:
+                raise AppError(f'Ошибка сверки Google: отсутствует лист «{name}».')
+            expected = plan['before']['sheets'].get(name, {}).get('merges', [])
+            if result['sheets'][name].get('merges', []) != expected:
+                raise AppError(f'Ошибка сверки Google: изменились объединения ячеек листа «{name}».')
         for change in plan['changes']:
             rows = result['sheets'][change['sheet']]['raw']
             value = rows[change['row'] - 1][change['col'] - 1] if change['row'] <= len(rows) and change['col'] <= len(rows[change['row'] - 1]) else ''
             if value != change['after']:
-                raise AppError(f'Ошибка сверки Google: {change["sheet"]}, {change["cell"]}. Копия сохранена.')
+                raise AppError(f'Ошибка сверки Google: {change["sheet"]}, {change["cell"]}.')
 
 
 def target(config, google_auth=None):
