@@ -136,3 +136,6 @@ html,body,#root{height:100%;min-height:0;overflow:hidden}
 #shoko-dark .google-connection>.sd-actions{margin:5px 0 8px}
 #shoko-dark .sd-activity>.sd-button{padding:6px 8px;font-size:12px}
 @media(max-width:600px){#shoko-dark .sd-activity{flex-wrap:wrap}#shoko-dark .sd-activity>.sd-button{margin-left:25px}}
+/* Review the entire Garage operation before the existing write confirmation. */
+#shoko-dark .garage-review{border:1px solid var(--sd-line);border-radius:8px;padding:12px 16px;margin:12px 0;background:var(--sd-input);overflow-wrap:anywhere}
+#shoko-dark .garage-review p{margin:7px 0;font-size:13px;line-height:1.5}

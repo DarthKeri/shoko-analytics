@@ -36,8 +36,13 @@ def fixtures(folder):
     ws['D2'] = '=1+1'; ws['D2'].fill = PatternFill('solid', fgColor='ABCDEF')
     ws['F2'] = 999; ws['G2'] = 888; ws['H2'] = 777
     untouched = wb.create_sheet('Не изменять'); untouched['A1'] = '=2+3'
+    garage = wb.create_sheet('Гараж 20.08.2026')
+    garage.append(['Класс', 'Модель', 'Год выпуска'] + [''] * 12 + [f'Конкурент {i}' for i in range(1, 41)] + [''] * 6)
+    garage.append(['Эконом', 'Volkswagen Polo', 2019])
+    for address, expression in {'L2': '=AVERAGE(P2:AY2)', 'N2': '=COUNTA(P2:BC2)', 'BE2': '=MIN(P2:BC2)', 'BF2': '=AVERAGE(BE2;BG2)', 'BG2': '=AVERAGE(P2:BC2)', 'BH2': '=AVERAGE(BI2;BG2)', 'BI2': '=MAX(P2:BC2)'}.items():
+        garage[address] = expression
     wb.save(folder / 'target.xlsx'); wb.close()
-    (folder / 'garage.csv').write_text('model;price\nPolo;1500\n', encoding='utf-8')
+    (folder / 'garage.csv').write_text('Марка и модель;Тариф;Год выпуска;Цена аренды 7 / 0;Тип топлива;КПП;Таксопарк\nVolkswagen Polo;эконом;2019;1500;бензин;автомат;Тестовый парк\n', encoding='utf-8')
     return dict(prostoi=str(folder/'prostoi.xlsx'), drivers=str(folder/'drivers.xlsx'), csv=str(folder/'garage.csv'), target=str(folder/'target.xlsx'), target_mode='local', last_date='2026-08-20', test_copy_confirmed=True)
 
 

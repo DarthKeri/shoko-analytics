@@ -13,6 +13,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from .calculation import PROSTOI, DRIVERS, TARGET, GARAGE
 from .storage import AppError, digest, file_hash
+from .garage import managed_names, comparison_before, formula_text
 
 SHEETS = [PROSTOI, DRIVERS, TARGET, GARAGE]
 LIVE_ID = '1HzoNqo_7x1RE_4ADegdW46r7qKhUl9xrKi6j1DXEiTQ'
@@ -204,9 +205,13 @@ def changes_for(before, after):
             for c in range(max(len(old_row), len(new_row))):
                 value = new_row[c] if c < len(new_row) else ''
                 prior = old_row[c] if c < len(old_row) else ''
-                if not equivalent(prior, value):
-                    original = raw[r][c] if r < len(raw) and c < len(raw[r]) else prior
-                    changes.append(dict(sheet=name, row=r + 1, col=c + 1, cell=f'{get_column_letter(c + 1)}{r + 1}', before=original, after=value))
+                original = raw[r][c] if r < len(raw) and c < len(raw[r]) else prior
+                is_formula = isinstance(value, dict) and set(value) == {'formula'}
+                if not equivalent(original if is_formula else prior, formula_text(value)):
+                    change = dict(sheet=name, row=r + 1, col=c + 1, cell=f'{get_column_letter(c + 1)}{r + 1}', before=original, after=formula_text(value))
+                    if is_formula:
+                        change['kind'] = 'formula'
+                    changes.append(change)
     if len(changes) > 500_000:
         raise AppError('Слишком много изменений для MVP. Выберите меньшую таблицу.')
     return changes
@@ -260,13 +265,13 @@ class LocalTarget:
     def __init__(self, config):
         self.path = readable(guard_target(config), {'.xlsx'})
 
-    def snapshot(self):
+    def snapshot(self, extra=()):
         before_hash = file_hash(self.path)
         values = load_workbook(self.path, data_only=True)
         raw = load_workbook(self.path, data_only=False)
         try:
             sheets = {}
-            for name in SHEETS:
+            for name in managed_names(values.sheetnames, extra):
                 if name not in values.sheetnames:
                     continue
                 ws = values[name]
@@ -274,7 +279,8 @@ class LocalTarget:
                     raise AppError(f'Лист «{name}» превышает лимит MVP.')
                 sheets[name] = dict(values=[[scalar(v) for v in row] for row in ws.values],
                                     raw=[[scalar(v) for v in row] for row in raw[name].values],
-                                    rows=ws.max_row, cols=ws.max_column)
+                                    rows=ws.max_row, cols=ws.max_column,
+                                    formula_cells=[[c.row - 1, c.column - 1] for row in raw[name] for c in row if c.data_type == 'f'])
             if TARGET not in sheets:
                 raise AppError(f'В копии отсутствует лист «{TARGET}».')
         finally:
@@ -282,7 +288,8 @@ class LocalTarget:
             raw.close()
         if file_hash(self.path) != before_hash:
             raise AppError('Целевая книга изменилась во время чтения. Повторите обновление.')
-        return dict(mode='local', target=str(self.path), fingerprint=before_hash, sheets=sheets)
+        return dict(mode='local', target=str(self.path), fingerprint=before_hash, sheets=sheets,
+                    metadata={'sheets': [{'properties': {'title': name}} for name in values.sheetnames]})
 
     def prepare_write(self, plan):
         return None
@@ -291,13 +298,30 @@ class LocalTarget:
         workbook = load_workbook(self.path)
         temp = self.path.with_name('.' + self.path.stem + '.' + uuid.uuid4().hex + '.xlsx')
         try:
+            for op in plan.get('operations', []):
+                if op['kind'] == 'archive':
+                    archive = workbook.copy_worksheet(workbook[op['source']])
+                    archive.title = op['target']
+                    frozen = plan['after'][op['target']]
+                    for row in archive:
+                        for c in row:
+                            if c.__class__.__name__ == 'MergedCell':
+                                continue
+                            value = frozen[c.row - 1][c.column - 1] if c.row <= len(frozen) and c.column <= len(frozen[c.row - 1]) else ''
+                            c.value = value if value != '' else None
+                            if isinstance(value, str):
+                                c.data_type = 's'
+                elif op['kind'] == 'rename':
+                    workbook[op['source']].title = op['target']
             for name in plan['after']:
                 if name not in workbook.sheetnames:
                     workbook.create_sheet(name)
             for change in plan['changes']:
                 c = workbook[change['sheet']].cell(change['row'], change['col'])
                 c.value = change['after'] if change['after'] != '' else None
-                if isinstance(change['after'], str) and change['after']:
+                if change.get('kind') == 'formula':
+                    c.data_type = 'f'
+                elif isinstance(change['after'], str) and change['after']:
                     c.data_type = 's'  # spreadsheet formulas from CSV are treated as text
             workbook.save(temp)
             if file_hash(self.path) != plan['before']['fingerprint']:
@@ -402,10 +426,10 @@ class GoogleTarget:
             raise AppError(f'В Google-таблице нет листа «{TARGET}».')
         return meta
 
-    def snapshot(self):
+    def snapshot(self, extra=()):
         meta = self.check()
         titles = {s['properties']['title'] for s in meta.get('sheets', [])}
-        names = [name for name in SHEETS if name in titles]
+        names = managed_names(sorted(titles), extra)
         merges = {s['properties']['title']: s.get('merges', []) for s in meta.get('sheets', [])}
         # Cell formatting can dwarf the actual values by gigabytes. Read only the
         # values needed for calculation and formulas needed for exact comparison.
@@ -414,7 +438,7 @@ class GoogleTarget:
         sheets = {}
         count = 0
         for sheet in data.get('sheets', []):
-            values, raw = [], []
+            values, raw, formula_cells = [], [], []
             for block in sheet.get('data', []):
                 for r, row in enumerate(block.get('rowData', []), block.get('startRow', 0)):
                     while len(values) <= r:
@@ -425,9 +449,14 @@ class GoogleTarget:
                         if count > MAX_CELLS:
                             raise AppError('Google-таблица слишком большая для MVP.')
                         entered = item.get('userEnteredValue', {})
+                        if 'formulaValue' in entered:
+                            formula_cells.append([r, c])
                         effective = item.get('effectiveValue', {})
                         if 'errorValue' in effective:
-                            val = '#Ошибка формулы'
+                            val = {'DIVIDE_BY_ZERO': '#DIV/0!', 'N_A': '#N/A', 'REF': '#REF!', 'VALUE': '#VALUE!',
+                                   'NUM': '#NUM!', 'NAME': '#NAME?', 'NULL_VALUE': '#NULL!', 'ERROR': '#ERROR!'}.get(effective['errorValue'].get('type'), '#ERROR!')
+                        elif not effective and 'formulaValue' in entered:
+                            val = ''  # Google omits effectiveValue for a formula returning "".
                         else:
                             val = next(iter(effective.values()), next(iter(entered.values()), ''))
                         for matrix, value in ((values, val), (raw, next(iter(entered.values()), ''))):
@@ -440,15 +469,45 @@ class GoogleTarget:
                         row.pop()
                 while matrix and not matrix[-1]:
                     matrix.pop()
-            sheets[props['title']] = dict(values=values, raw=raw, rows=props['gridProperties']['rowCount'], cols=props['gridProperties']['columnCount'], id=props['sheetId'], merges=merges.get(props['title'], []))
+            sheets[props['title']] = dict(values=values, raw=raw, rows=props['gridProperties']['rowCount'], cols=props['gridProperties']['columnCount'], id=props['sheetId'], merges=merges.get(props['title'], []), formula_cells=formula_cells)
         # Keep structure of ALL tabs for collision-free IDs, but no duplicate grid.
         fingerprint = digest({'metadata': meta, 'sheets': {name: {k: v for k, v in item.items() if k != 'values'} for name, item in sheets.items()}})
         return dict(mode='google', target=self.id, fingerprint=fingerprint, sheets=sheets, metadata=meta)
 
     def prepare_write(self, plan):
         requests = []
+        baseline = comparison_before(plan)
         sheet_ids = {name: item['id'] for name, item in plan['before']['sheets'].items()}
         used = set(sheet_ids.values()) | {s['properties']['sheetId'] for s in plan['before'].get('metadata', {}).get('sheets', [])}
+        for op in plan.get('operations', []):
+            source_id = sheet_ids[op['source']]
+            if op['kind'] == 'archive':
+                identity = max(used or {0}) + 1
+                used.add(identity)
+                sheet_ids[op['target']] = identity
+                requests.append({'duplicateSheet': {'sourceSheetId': source_id, 'newSheetId': identity, 'newSheetName': op['target']}})
+                frozen = plan['after'][op['target']]
+                source = plan['before']['sheets'][op['source']]
+                # The native duplicate already retains literal cells. Freeze only
+                # formula anchors, including empty results; never touch merged followers.
+                for r, row in enumerate(source.get('raw', [])):
+                    groups = []
+                    for c, value in enumerate(row):
+                        if not isinstance(value, str) or not value.startswith('='):
+                            continue
+                        if any(merged_follower(m, r, c) for m in source.get('merges', [])):
+                            raise AppError('Формула архива находится внутри объединённой области.')
+                        if not groups or c != groups[-1][-1] + 1:
+                            groups.append([])
+                        groups[-1].append(c)
+                    for group in groups:
+                        requests.append({'updateCells': {'start': {'sheetId': identity, 'rowIndex': r, 'columnIndex': group[0]},
+                                         'rows': [{'values': [{'userEnteredValue': google_value(frozen[r][c] if r < len(frozen) and c < len(frozen[r]) else '')} for c in group]}], 'fields': 'userEnteredValue'}})
+            elif op['kind'] == 'rename':
+                sheet_ids[op['target']] = source_id
+                requests.append({'updateSheetProperties': {'properties': {'sheetId': source_id, 'title': op['target']}, 'fields': 'title'}})
+            else:
+                raise AppError('Неизвестная операция плана Гаража.')
         for name, rows in plan['after'].items():
             needed_rows = max(1, len(rows))
             needed_cols = max(1, max((len(row) for row in rows), default=1))
@@ -458,7 +517,7 @@ class GoogleTarget:
                 sheet_ids[name] = identity
                 requests.append({'addSheet': {'properties': {'sheetId': identity, 'title': name, 'gridProperties': {'rowCount': needed_rows, 'columnCount': needed_cols}}}})
             else:
-                old = plan['before']['sheets'][name]
+                old = baseline['sheets'][name]
                 if needed_rows > old['rows'] or needed_cols > old['cols']:
                     requests.append({'updateSheetProperties': {'properties': {'sheetId': old['id'], 'gridProperties': {'rowCount': max(old['rows'], needed_rows), 'columnCount': max(old['cols'], needed_cols)}}, 'fields': 'gridProperties.rowCount,gridProperties.columnCount'}})
         # Exact rectangles of adjacent changed cells. Never fill holes with a
@@ -469,7 +528,7 @@ class GoogleTarget:
         blocks = {}
         for (name, row), changes in sorted(grouped.items()):
             # Never silently filter an already-reviewed plan at write time.
-            merges = [m for m in plan['before']['sheets'].get(name, {}).get('merges', [])
+            merges = [m for m in baseline['sheets'].get(name, {}).get('merges', [])
                       if m.get('startRowIndex', 0) <= row - 1 < m['endRowIndex']]
             if any(merged_follower(m, row - 1, change['col'] - 1) for m in merges for change in changes):
                 raise AppError(f'Лист «{name}»: план содержит запись внутрь объединённой ячейки. '
@@ -482,7 +541,7 @@ class GoogleTarget:
                 groups[-1].append(item)
             for group in groups:
                 key = (name, group[0]['col'], len(group))
-                values = {'values': [{'userEnteredValue': google_value(c['after'])} for c in group]}
+                values = {'values': [{'userEnteredValue': {'formulaValue': c['after']} if c.get('kind') == 'formula' else google_value(c['after'])} for c in group]}
                 previous = blocks.get(key)
                 if previous and previous['end'] == row - 1:
                     previous['request']['updateCells']['rows'].append(values)
@@ -516,18 +575,46 @@ class GoogleTarget:
             self.request('POST', ':batchUpdate', data=body, headers=headers, timeout=GOOGLE_WRITE_TIMEOUT)
 
     def verify(self, plan):
-        result = self.snapshot()
+        result = self.snapshot(extra=plan['after']) if plan.get('operations') or plan.get('garage') else self.snapshot()
+        baseline = comparison_before(plan)
         for name in plan['after']:
             if name not in result['sheets']:
                 raise AppError(f'Ошибка сверки Google: отсутствует лист «{name}».')
-            expected = plan['before']['sheets'].get(name, {}).get('merges', [])
-            if result['sheets'][name].get('merges', []) != expected:
+            expected = baseline['sheets'].get(name, {}).get('merges', [])
+            actual_merges = result['sheets'][name].get('merges', [])
+            if any(op['kind'] == 'archive' and op['target'] == name for op in plan.get('operations', [])):
+                expected = [{k: v for k, v in merge.items() if k != 'sheetId'} for merge in expected]
+                actual_merges = [{k: v for k, v in merge.items() if k != 'sheetId'} for merge in actual_merges]
+            if actual_merges != expected:
                 raise AppError(f'Ошибка сверки Google: изменились объединения ячеек листа «{name}».')
         for change in plan['changes']:
             rows = result['sheets'][change['sheet']]['raw']
             value = rows[change['row'] - 1][change['col'] - 1] if change['row'] <= len(rows) and change['col'] <= len(rows[change['row'] - 1]) else ''
             if value != change['after']:
                 raise AppError(f'Ошибка сверки Google: {change["sheet"]}, {change["cell"]}.')
+        for op in plan.get('operations', []):
+            if op['kind'] == 'archive':
+                actual = result['sheets'][op['target']]['raw']
+                expected = plan['after'][op['target']]
+                if changes_for({'sheets': {op['target']: {'values': actual}}}, {op['target']: expected}):
+                    raise AppError('Ошибка сверки: архив Гаража не совпадает с предыдущим срезом.')
+        if plan.get('derived'):
+            for attempt in range(3):
+                mismatch = None
+                for expected in plan['derived']:
+                    matrix = result['sheets'][expected['sheet']]['values']
+                    value = matrix[expected['row'] - 1][expected['col'] - 1] if expected['row'] <= len(matrix) and expected['col'] <= len(matrix[expected['row'] - 1]) else ''
+                    want = expected['value']
+                    numeric = type(value) in (int, float) and type(want) in (int, float)
+                    if not (math.isclose(value, want, rel_tol=1e-12, abs_tol=1e-9) if numeric else equivalent(value, want)):
+                        mismatch = f'{get_column_letter(expected["col"])}{expected["row"]}'
+                        break
+                if mismatch is None:
+                    break
+                if attempt == 2:
+                    raise AppError(f'Ошибка пересчёта Гаража: «{TARGET}», {mismatch}. Копия сохранена.')
+                time.sleep(2)
+                result = self.snapshot(extra=plan['after'])
 
 
 def target(config, google_auth=None):

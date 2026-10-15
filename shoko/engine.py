@@ -14,6 +14,7 @@ from .telegram import Telegram
 from .drive_backup import DriveBackup
 from .google_auth import GoogleAuth, client_config
 from .plans import save_plan, load_plan
+from .garage import prepare_garage, comparison_before, formula_text
 
 STEPS = ['Проверка файлов и доступа', 'Чтение исходных данных', 'Получение CSV', 'Подготовка изменений']
 CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'google_auth_mode', 'google_oauth_client', 'developer', 'appearance', 'telegram_mode', 'telegram_bot', 'telegram_timeout', 'last_url', 'last_date'}
@@ -109,6 +110,8 @@ class Engine:
                 plan['count'] = len(self.plan['changes'])
                 plan['cleared'] = sum(c['after'] == '' for c in self.plan['changes'])
                 plan['sheets'] = [{'name': k, 'rows': len(v), 'columns': max(map(len, v), default=0), 'changes': sum(c['sheet'] == k for c in self.plan['changes'])} for k, v in self.plan['after'].items()]
+                plan['operations'] = self.plan.get('operations', [])
+                plan['garage'] = self.plan.get('garage')
             try:
                 target_allowed = target_key(self.config()) in self.config()['allowed_targets']
             except AppError:
@@ -132,6 +135,8 @@ class Engine:
                             data[r][c] = value
             else:
                 raise AppError('Неизвестный лист плана.')
+            if kind != 'changes':
+                data = [[formula_text(value) for value in row] for row in data]
             return {'data': data[offset:offset + 100], 'total': len(data), 'offset': offset}
 
     def set_phase(self, **values):
@@ -293,16 +298,20 @@ class Engine:
             prostoi = assemble_prostoi(current, previous, before['sheets'].get(PROSTOI, {}).get('values', []), processing)
             prices, warnings = calculate(prostoi, drivers, before['sheets'][TARGET]['values'], processing)
             after = {PROSTOI: prostoi, DRIVERS: drivers, TARGET: prices, GARAGE: garage}
-            after, merge_warnings = normalize_merged_output(before, after)
+            garage_plan = prepare_garage(before, after, garage, processing)
+            if garage_plan['garage']['archived_errors']:
+                warnings.append(f'В старом Гараже {garage_plan["garage"]["archived_errors"]} ошибок формул: их вид сохранится текстом в архиве. Исходные формулы останутся в полной резервной копии.')
+            baseline = comparison_before(dict(before=before, **garage_plan))
+            after, merge_warnings = normalize_merged_output(baseline, after)
             warnings.extend(merge_warnings)
-            changes = changes_for(before, after)
+            changes = changes_for(baseline, after)
             self.check_cancel()
             sources = {key: {'path': config[key], 'sha256': hash_value} for key, hash_value in source_hashes.items()}
             for item in sources.values():
                 if file_hash(item['path']) != item['sha256']:
                     raise AppError('Исходный файл изменился во время подготовки. Повторите обновление.')
-            plan = dict(id=identity, date=processing_date, url=url, created=stamp(), rule='primary-legacy-v1',
-                        before=before, after=after, changes=changes, sources=sources, config_digest=digest(self.config()), warnings=warnings)
+            plan = dict(id=identity, date=processing_date, url=url, created=stamp(), rule='primary-legacy-v1+garage-v1',
+                        before=before, after=after, changes=changes, sources=sources, config_digest=digest(self.config()), warnings=warnings, **garage_plan)
             if config['target_mode'] == 'google' and config['google_auth_mode'] == 'oauth':
                 plan['google_identity'] = self.google.identity(config)
             adapter.prepare_write(plan)  # Validate size before preview, approval or backup.
@@ -314,6 +323,8 @@ class Engine:
             self.set_phase(phase='preview', plan_id=identity, error='', step=4)
             self.store.log('INFO', f'Подготовлен план: {len(changes)} изменений. Запись ожидает подтверждения.')
             self.store.log('INFO', f'Размер сохранённого плана: {saved_path.stat().st_size / 1_000_000:.2f} МБ.')
+            info = garage_plan['garage']
+            self.store.log('INFO', f'Гараж: {info["matched"]} строк с предложениями, {info["cleared"]} без предложений, {info["ignored"]} исключений. Запись ожидает подтверждения.')
         return self.launch('prepare', work)
 
     def cancel(self):
@@ -328,6 +339,8 @@ class Engine:
             if not self.plan or self.plan['id'] != identity or self.plan['checksum'] != checksum or self.state['phase'] != 'preview':
                 raise AppError('Подтверждение не соответствует текущему плану. Подготовьте обновление заново.')
             approved = copy.deepcopy(self.plan)
+            if approved.get('garage') and not approved['changes'] and not approved.get('operations'):
+                raise AppError('Изменений нет. Запись и новая резервная копия не нужны.')
         def work():
             guard_target(self.config())
             if digest(self.config()) != approved['config_digest']:
