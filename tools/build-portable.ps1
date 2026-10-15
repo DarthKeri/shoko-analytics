@@ -1,4 +1,4 @@
-param([string]$Python, [switch]$StageOnly)
+param([string]$Python, [switch]$StageOnly, [string]$OAuthClient = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 if (!$Python) { $Python = Join-Path $projectRoot '.venv\Scripts\python.exe' }
@@ -26,7 +26,8 @@ $launcher = Join-Path $projectRoot ('build\launcher-' + $buildId + '.exe')
 & $compiler /nologo /target:winexe /platform:x64 /optimize+ "/out:$launcher" "/win32icon:$projectRoot\assets\shoko.ico" "/win32manifest:$projectRoot\assets\launcher.manifest" /reference:System.Windows.Forms.dll "$PSScriptRoot\Launcher.cs"
 if ($LASTEXITCODE) { throw 'Desktop launcher build failed' }
 $candidate = Join-Path $projectRoot ('build\portable-candidate-' + $buildId)
-& $Python "$PSScriptRoot\package_windows.py" assemble --output $candidate --python-zip $pythonZip --site-packages $sitePackages --launcher $launcher
+$oauthArguments = if ($OAuthClient) { @('--oauth-client', $OAuthClient) } else { @() }
+& $Python "$PSScriptRoot\package_windows.py" assemble --output $candidate --python-zip $pythonZip --site-packages $sitePackages --launcher $launcher @oauthArguments
 if ($LASTEXITCODE) { throw 'Folder distribution assembly failed' }
 foreach ($runtimeFile in @('python.exe', 'pythonw.exe', 'python313.dll')) {
     $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $candidate ('runtime\' + $runtimeFile))

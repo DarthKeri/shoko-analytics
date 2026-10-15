@@ -82,6 +82,8 @@ def bot_offers(rows):
     missing = [h for h in REQUIRED if h not in headers]
     if missing:
         raise AppError('В CSV Гаража нет колонок: ' + ', '.join(missing))
+    if any(headers.count(h) != 1 for h in REQUIRED):
+        raise AppError('В CSV Гаража повторяются обязательные заголовки. Выберите корректную выгрузку.')
     columns = {h: headers.index(h) for h in REQUIRED}
     result = []
     for n, row in enumerate(rows[1:], 2):
@@ -99,6 +101,34 @@ def bot_offers(rows):
             raise AppError(f'CSV Гаража, строка {n}: неверный год выпуска.')
         result.append(((klass, normalize_model(v['Марка и модель']), v['Год выпуска']), float(price)))
     return result
+
+
+
+def match_garage_rows(template, csv_rows):
+    headers = template[0] if template else []
+    comp = [i for i, h in enumerate(headers) if re.fullmatch(r'Конкурент\s+([1-9]|[1-3]\d|40)', str(h).strip(), re.I)]
+    if comp != list(range(15, 55)):
+        raise AppError('В шаблоне Гаража нужны колонки «Конкурент 1…40» в P:BC. Проверьте структуру.')
+    offers = bot_offers(csv_rows)
+    cars, prices, matched, cleared, skipped = {}, {}, 0, 0, 0
+    for r, row in enumerate(template[1:], 1):
+        key = car_key(row)
+        if not key:
+            continue
+        if key in cars:
+            raise AppError(f'Неоднозначные строки Гаража: {key[1]} / {key[2]}.')
+        cars[key] = r
+        values = sorted(p for b, p in offers if b[1:] == key[1:] and classes_match(key, b)) if not ignored(key) else []
+        prices[r] = values
+        if ignored(key):
+            skipped += 1
+        elif values:
+            matched += 1
+        else:
+            cleared += 1
+    if not matched:
+        raise AppError(f'Гараж: ни одного совпадения. В CSV {len(csv_rows) - 1} записей, после фильтров {len(offers)}, строк шаблона {len(cars)}. Обновление всей таблицы заблокировано; старые цены не изменены.')
+    return dict(cars=cars, prices=prices, eligible=len(offers), matched=matched, cleared=cleared, ignored=skipped)
 
 
 def comparison_before(plan):
@@ -178,30 +208,13 @@ def prepare_garage(before, after, csv_rows, processing):
         for c, value in enumerate(row):
             if isinstance(value, str) and value.startswith('=') and (typed_formulas is None or (r, c) in typed_formulas):
                 set_cell(rows, r, c, formula(value.replace(f"'{source_name}'!", f"'{work_name}'!")))
-    headers = rows[0] if rows else []
-    comp = [i for i, h in enumerate(headers) if re.fullmatch(r'Конкурент\s+([1-9]|[1-3]\d|40)', str(h).strip(), re.I)]
-    if comp != list(range(15, 55)):
-        raise AppError('В шаблоне Гаража нужны колонки «Конкурент 1…40» в P:BC. Проверьте структуру.')
-    offers = bot_offers(csv_rows)
-    cars, matched, cleared, skipped = {}, 0, 0, 0
-    for r, old_row in enumerate(source['values'][1:], 1):
-        key = car_key(old_row)
-        if not key:
-            continue
-        if key in cars:
-            raise AppError(f'Неоднозначные строки Гаража: {key[1]} / {key[2]}.')
-        cars[key] = r
-        prices = sorted(p for b, p in offers if b[1:] == key[1:] and classes_match(key, b)) if not ignored(key) else []
-        if ignored(key):
-            skipped += 1
-        elif prices:
-            matched += 1
-        else:
-            cleared += 1
+    matches = match_garage_rows(source['values'], csv_rows)
+    cars = matches['cars']
+    matched, cleared, skipped = (matches[k] for k in ('matched', 'cleared', 'ignored'))
+    comp = list(range(15, 55))
+    for r, prices in matches['prices'].items():
         for i, c in enumerate(comp):
             set_cell(rows, r, c, prices[i] if i < len(prices) else '')
-    if not matched:
-        raise AppError(f'Гараж: ни одного совпадения. В CSV {len(csv_rows) - 1} записей, после фильтров {len(offers)}, строк шаблона {len(cars)}. Обновление всей таблицы заблокировано; старые цены не изменены.')
     operations = []
     if work_name != source_name:
         archive = _unique_archive(source_name, names)
@@ -249,4 +262,4 @@ def prepare_garage(before, after, csv_rows, processing):
     if not links:
         raise AppError('Не удалось связать Гараж с J:O листа «Предложение цен». Обновление заблокировано.')
     archived_errors = sum(isinstance(v, str) and v.startswith(('#DIV/0!', '#N/A', '#REF!', '#VALUE!', '#NUM!', '#NAME?', '#NULL!', '#ERROR!')) for row in source['values'] for v in row) if operations else 0
-    return dict(operations=operations, garage=dict(sheet=work_name, csv_rows=len(csv_rows) - 1, eligible=len(offers), matched=matched, cleared=cleared, ignored=skipped, links=links, archived_errors=archived_errors), derived=expected)
+    return dict(operations=operations, garage=dict(sheet=work_name, csv_rows=len(csv_rows) - 1, eligible=matches['eligible'], matched=matched, cleared=cleared, ignored=skipped, links=links, archived_errors=archived_errors), derived=expected)

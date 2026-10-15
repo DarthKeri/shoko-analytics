@@ -1,4 +1,4 @@
-param([string]$Python = 'python')
+param([string]$Python = 'python', [string]$OAuthClient = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 Push-Location -LiteralPath $projectRoot
@@ -16,7 +16,7 @@ try {
     & npm.cmd run build --prefix frontend
     if ($LASTEXITCODE) { throw 'UI build failed' }
     # The portable builder runs the tests on the exact Python shipped in the app.
-    & "$PSScriptRoot\build-portable.ps1" -Python $appPython
+    & "$PSScriptRoot\build-portable.ps1" -Python $appPython -OAuthClient $OAuthClient
     & "$PSScriptRoot\create-shortcut.ps1"
     Write-Host "Ready: $projectRoot\dist\ShokoAnalytics\ShokoAnalytics.exe"
 } finally { Pop-Location }

@@ -127,7 +127,7 @@ def date_columns(matrix, processing_date):
             except (ValueError, TypeError):
                 pass
         if not matches:
-            raise AppError(f'В простоях отсутствует день {day} для даты {(processing_date - timedelta(days=offset)).isoformat()}.')
+            raise AppError(f'В простоях отсутствует день {day} для даты {(processing_date - timedelta(days=offset)):%d.%m.%Y}.')
         positions[offset] = matches[-1]  # primary legacy searches by day, last occurrence wins
     return positions
 

@@ -15,6 +15,7 @@ from .drive_backup import DriveBackup
 from .google_auth import GoogleAuth, client_config
 from .plans import save_plan, load_plan
 from .garage import prepare_garage, comparison_before, formula_text
+from .validation import read_prostoi_source, read_bot_source, check_bot_source
 
 STEPS = ['Проверка файлов и доступа', 'Чтение исходных данных', 'Получение CSV', 'Подготовка изменений']
 CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'google_auth_mode', 'google_oauth_client', 'developer', 'appearance', 'telegram_mode', 'telegram_bot', 'telegram_timeout', 'last_url', 'last_date'}
@@ -83,6 +84,7 @@ class Engine:
             dependencies = {'prostoi': ('prostoi', 'last_date'), 'drivers': ('drivers', 'last_date'),
                             'target': ('target', 'target_mode', 'credentials', 'allowed_targets'),
                             'credentials': ('credentials',), 'csv': ('csv', 'telegram_mode', 'telegram_bot', 'telegram_timeout')}
+            dependencies['csv'] += ('target', 'target_mode', 'credentials', 'allowed_targets', 'google_auth_mode', 'google_oauth_client')
             dependencies['backup'] = ('google_backup_folder', 'target', 'credentials', 'target_mode', 'allowed_targets')
             for key in ('credentials', 'target', 'backup'):
                 dependencies[key] += ('google_auth_mode', 'google_oauth_client')
@@ -184,10 +186,7 @@ class Engine:
 
     def check_one(self, name, config, processing_date):
         if name == 'prostoi':
-            read_excel(config['prostoi'], f'Кол_состав_{processing_date:%m-%y}', 373, 345)
-            if processing_date.day < 15:
-                previous = processing_date.replace(day=1) - timedelta(days=1)
-                read_excel(config['prostoi'], f'Кол_состав_{previous:%m-%y}', 373, 345)
+            return read_prostoi_source(config['prostoi'], processing_date)[2]
         elif name == 'drivers':
             source_date = processing_date - timedelta(days=1)
             read_driver_excel(config['drivers'], source_date)
@@ -217,8 +216,10 @@ class Engine:
         elif name == 'csv':
             if config['telegram_mode'] == 'auto':
                 self.telegram.call(self.telegram.check(config['telegram_bot']))
-            else:
-                read_csv(config['csv'])
+                return 'Telegram и бот доступны. CSV будет проверен после получения при подготовке; сообщение боту не отправлялось.'
+            # Validate the local export before opening any Google connection.
+            rows = read_bot_source(config['csv'])
+            return check_bot_source(config['csv'], target(config, self.google), rows)
         else:
             raise AppError('Неизвестный источник.')
 
@@ -252,12 +253,15 @@ class Engine:
         config = self.inputs(self.config(), processing)
         required = [('prostoi', 'Средние цены и простои'), ('drivers', 'Начисления'), ('target', 'Целевая копия')]
         if config['target_mode'] == 'google':
-            required += [('google_oauth_client', 'OAuth-файл Google')] if config['google_auth_mode'] == 'oauth' else [('credentials', 'Ключ Google')]
+            if config['google_auth_mode'] == 'service_account':
+                required += [('credentials', 'Ключ Google')]
             required += [('google_backup_folder', 'Папка копий Google Drive')]
         required += [('telegram_bot', 'Бот Telegram')] if config['telegram_mode'] == 'auto' else [('csv', 'CSV из бота')]
         missing = [label for key, label in required if not config[key].strip()]
         if missing:
             raise AppError('Заполните настройки: ' + ', '.join(missing) + '. Обновление не запущено.')
+        if config['target_mode'] == 'google' and config['google_auth_mode'] == 'oauth':
+            client_config(config.get('google_oauth_client', ''))
         parsed = urlparse(url)
         if parsed.scheme not in ('https', 'http') or not parsed.netloc or parsed.username or parsed.password:
             raise AppError('Вставьте корректную ссылку на Гараж.')
@@ -283,11 +287,7 @@ class Engine:
             self.check_cancel()
             source_hashes = {key: file_hash(config[key]) for key in ('prostoi', 'drivers')}
             self.set_phase(step=1)
-            current = read_excel(config['prostoi'], f'Кол_состав_{processing:%m-%y}', 373, 345)
-            previous = []
-            if processing.day < 15:
-                last_month = processing.replace(day=1) - timedelta(days=1)
-                previous = read_excel(config['prostoi'], f'Кол_состав_{last_month:%m-%y}', 373, 345)
+            current, previous, _ = read_prostoi_source(config['prostoi'], processing)
             drivers = read_driver_excel(config['drivers'], processing - timedelta(days=1))
             self.check_cancel()
             self.set_phase(step=2)
@@ -295,7 +295,7 @@ class Engine:
                 config['csv'] = self.telegram.call(self.telegram.download(config, url, identity, self.cancelled))
             csv_path = readable(config['csv'], {'.csv'})
             source_hashes['csv'] = file_hash(csv_path)
-            garage = read_csv(csv_path)
+            garage = read_bot_source(csv_path)
             self.check_cancel()
             self.set_phase(step=3)
             before = adapter.snapshot()
@@ -444,7 +444,7 @@ class Engine:
             if step == 'connect':
                 client_config(config.get('google_oauth_client', ''))
             self.plan = None
-            self.checks = {k: v for k, v in self.checks.items() if k not in ('target', 'credentials', 'backup')}
+            self.checks = {k: v for k, v in self.checks.items() if k not in ('target', 'credentials', 'backup', 'csv')}
             self.state.update(plan_id='', error='')
             if step == 'disconnect':
                 self.google.disconnect()

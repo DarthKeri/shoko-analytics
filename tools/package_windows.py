@@ -30,6 +30,20 @@ def inside(path, parent):
     return path
 
 
+def include_oauth_client(app, path):
+    if not path:
+        return
+    # Normalize a Desktop client only. Never copy the source JSON wholesale:
+    # service-account private keys, refresh/access tokens and user data cannot
+    # enter the distribution through this optional builder input.
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from shoko.google_auth import client_config
+    configuration = client_config(str(path))
+    destination = Path(app) / 'assets' / 'oauth-desktop.json'
+    destination.write_text(json.dumps(configuration, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
 def assemble(args):
     candidate = inside(args.output, ROOT / 'build')
     if candidate.exists():
@@ -64,6 +78,7 @@ def assemble(args):
         shutil.copy2(source, app / 'shoko' / source.name)
     for folder in ('web', 'assets'):
         shutil.copytree(ROOT / folder, app / folder)
+    include_oauth_client(app, getattr(args, 'oauth_client', None))
     shutil.copy2(args.launcher, candidate / 'ShokoAnalytics.exe')
     shutil.copy2(ROOT / 'requirements-runtime.txt', candidate / 'requirements-runtime.txt')
     forbidden = {'.vault', '.xlsx', '.xls', '.csv', '.session'}
@@ -149,6 +164,7 @@ if __name__ == '__main__':
     build.add_argument('--python-zip', required=True)
     build.add_argument('--site-packages', required=True)
     build.add_argument('--launcher', required=True)
+    build.add_argument('--oauth-client', help='Optional Desktop OAuth app configuration; never user tokens or a service-account key')
     release = commands.add_parser('publish')
     release.add_argument('--candidate', required=True)
     args = parser.parse_args()

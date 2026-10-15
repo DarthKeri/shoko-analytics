@@ -23,14 +23,20 @@ TOKEN_URI = 'https://oauth2.googleapis.com/token'
 AUTH_URIS = {'https://accounts.google.com/o/oauth2/auth', 'https://accounts.google.com/o/oauth2/v2/auth'}
 
 
-def client_config(path):
+def client_source_path(path=''):
+    # An installed Desktop OAuth client identifies the app, never the user.
+    # Builds may include this configuration; user tokens stay in the DPAPI vault.
+    return Path(path).expanduser() if path else Path(__file__).resolve().parent.parent / 'assets' / 'oauth-desktop.json'
+
+
+def client_config(path=''):
     try:
-        file = Path(path).expanduser()
-        if not path or not file.is_file() or file.suffix.lower() != '.json' or file.stat().st_size > 65_536:
+        file = client_source_path(path)
+        if not file.is_file() or file.suffix.lower() != '.json' or file.stat().st_size > 65_536:
             raise ValueError()
         data = json.loads(file.read_text(encoding='utf-8-sig'))
     except (ValueError, TypeError, OSError):
-        raise AppError('Выберите JSON-файл OAuth-клиента Google типа Desktop app (Приложение для компьютера).') from None
+        raise AppError('Вход Google не настроен для этой сборки. Укажите OAuth-клиент Desktop app в дополнительных настройках Google или установите настроенную сборку.') from None
     if not isinstance(data, dict):
         raise AppError('OAuth-файл должен содержать объект JSON клиента Desktop app.')
     if data.get('type') == 'service_account':
@@ -137,7 +143,7 @@ class GoogleAuth:
 
     def _status_signature(self, path):
         signature = [str(path)]
-        for file in (self.vault, Path(path or '')):
+        for file in (self.vault, client_source_path(path), client_source_path()):
             try:
                 stat = file.stat()
                 signature.append((stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino))
@@ -163,7 +169,7 @@ class GoogleAuth:
                 envelope = json.loads(self.vault.read_text(encoding='utf-8'))
                 data = json.loads(protect(base64.b64decode(envelope['dpapi'], validate=True), decrypt=True))
             if data.get('client_fingerprint') != expected:
-                raise AppError('Выбран другой OAuth-файл Google. Войдите в аккаунт заново.')
+                raise AppError('Выбран другой OAuth-клиент Google. Войдите в аккаунт заново.')
             info = data['credentials']
             if not info.get('refresh_token') or info.get('token_uri') != TOKEN_URI or not set(SCOPES).issubset(info.get('scopes', [])):
                 raise AppError('Сохранённый вход Google неполон. Войдите заново и разрешите Drive и таблицы.')
@@ -186,6 +192,16 @@ class GoogleAuth:
                 result = {'connected': True, 'email': saved['email'], 'message': 'Вход сохранён'}
             except AppError as exc:
                 result = {'connected': False, 'email': '', 'message': str(exc)}
+            try:
+                client_config(path)
+                result['client_configured'] = True
+            except AppError:
+                result['client_configured'] = False
+            try:
+                client_config()
+                result['built_in_client'] = True
+            except AppError:
+                result['built_in_client'] = False
             self._status_key, self._status_value = key, result
             return dict(result)
 

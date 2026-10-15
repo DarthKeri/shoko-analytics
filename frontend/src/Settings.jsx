@@ -56,6 +56,7 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
   const status=source=>{
     const result=data.checks[source];
     const dependencies={prostoi:['prostoi','last_date'],drivers:['drivers','last_date'],target:['target','target_mode','credentials'],credentials:['credentials'],backup:['google_backup_folder','target','credentials'],csv:['csv','telegram_mode','telegram_bot','telegram_timeout']};
+    dependencies.csv.push('target','target_mode','credentials','google_auth_mode','google_oauth_client');
     for(const key of ['target','credentials','backup'])dependencies[key].push('google_auth_mode','google_oauth_client');
     const edited=dependencies[source].some(key=>form[key]!==data.config[key])||(['prostoi','drivers'].includes(source)&&result?.date!==(form.last_date||today()));
     const running=checking===source&&data.state.phase==='checking';

@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from .calculation import PROSTOI, DRIVERS, TARGET, GARAGE, driver_counts, cell
 from .storage import AppError, digest, file_hash
-from .garage import managed_names, comparison_before, formula_text
+from .garage import managed_names, comparison_before, formula_text, latest_garage
 
 SHEETS = [PROSTOI, DRIVERS, TARGET, GARAGE]
 LIVE_ID = '1HzoNqo_7x1RE_4ADegdW46r7qKhUl9xrKi6j1DXEiTQ'
@@ -279,6 +279,20 @@ class LocalTarget:
     def __init__(self, config):
         self.path = readable(guard_target(config), {'.xlsx'})
 
+    def garage_template(self):
+        with self.path.open('rb') as stream:
+            wb = load_workbook(stream, read_only=True, data_only=True)
+            try:
+                name = latest_garage(wb.sheetnames)
+                if not name:
+                    raise AppError('В целевой копии нет листа «Гараж ДД.ММ.ГГГГ». Проверьте выбранную таблицу.')
+                ws = wb[name]
+                if ws.max_row * 55 > MAX_CELLS:
+                    raise AppError('Шаблон Гаража превышает лимит MVP.')
+                return name, [[scalar(v) for v in row] for row in ws.iter_rows(max_col=55, values_only=True)]
+            finally:
+                wb.close()
+
     def snapshot(self, extra=()):
         before_hash = file_hash(self.path)
         values = load_workbook(self.path, data_only=True)
@@ -439,6 +453,19 @@ class GoogleTarget:
         if TARGET not in titles:
             raise AppError(f'В Google-таблице нет листа «{TARGET}».')
         return meta
+
+    def garage_template(self):
+        metadata = self.check()
+        name = latest_garage([s['properties']['title'] for s in metadata.get('sheets', [])])
+        if not name:
+            raise AppError('В целевой копии нет листа «Гараж ДД.ММ.ГГГГ». Проверьте выбранную таблицу.')
+        address = "'" + name.replace("'", "''") + "'!A:BC"
+        response = self.request('GET', '/values:batchGet', params={'ranges': address, 'valueRenderOption': 'UNFORMATTED_VALUE'})
+        ranges = response.get('valueRanges', [])
+        rows = ranges[0].get('values', []) if ranges else []
+        if len(rows) * 55 > MAX_CELLS:
+            raise AppError('Шаблон Гаража превышает лимит MVP.')
+        return name, rows
 
     def snapshot(self, extra=()):
         meta = self.check()

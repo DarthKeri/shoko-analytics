@@ -47,3 +47,6 @@ node_modules/
 /smoke-ok.txt
 /ui-smoke.json
 workspace.location.json
+
+# Private per-build Desktop OAuth configuration
+**/oauth-desktop.json
