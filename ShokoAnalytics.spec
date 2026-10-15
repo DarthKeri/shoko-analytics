@@ -7,5 +7,6 @@ a = Analysis([str(root / 'main.py')], pathex=[str(root)],
     hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=['tkinter', 'matplotlib', 'pandas'], noarchive=False)
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='ShokoAnalytics', debug=False,
-    bootloader_ignore_signals=False, strip=False, upx=False, console=False, icon=str(root / 'assets' / 'shoko.ico'))
+    bootloader_ignore_signals=False, strip=False, upx=False, console=False, icon=str(root / 'assets' / 'shoko.ico'),
+    version=str(root / 'assets' / 'windows-version.txt'))
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='ShokoAnalytics')

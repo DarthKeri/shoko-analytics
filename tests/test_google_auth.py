@@ -98,6 +98,68 @@ class GoogleAuthTests(unittest.TestCase):
             self.assertNotIn(secret, json.dumps(status))
         self.assertEqual(self.store.copies(), [])
 
+    def test_ui_status_polls_do_not_repeatedly_decrypt_credentials(self):
+        self.save()
+        config = {'google_auth_mode': 'oauth', 'google_oauth_client': str(self.path)}
+        with patch('shoko.google_auth.protect', side_effect=fake_protect) as protect:
+            for _ in range(120):
+                status = self.auth.status(config)
+                self.assertTrue(status['connected'])
+                self.assertEqual(status['email'], 'fixture@example.test')
+            self.assertEqual(protect.call_count, 1)
+            self.assertTrue(protect.call_args.kwargs['decrypt'])
+            status['email'] = 'tampered-ui@example.test'
+            self.assertEqual(self.auth.status(config)['email'], 'fixture@example.test')
+            self.assertNotIn('fixture-access-token', json.dumps(self.auth._status_value))
+
+    def test_cached_status_is_invalidated_by_save_disconnect_and_vault_change(self):
+        self.save()
+        config = {'google_auth_mode': 'oauth', 'google_oauth_client': str(self.path)}
+        self.assertTrue(self.auth.status(config)['connected'])
+        saved = self.auth.load(str(self.path))
+        self.auth.save(dict(saved, email='second@example.test'))
+        self.assertEqual(self.auth.status(config)['email'], 'second@example.test')
+        self.auth.vault.write_text('{"dpapi":"invalid"}', encoding='utf-8')
+        self.assertFalse(self.auth.status(config)['connected'])
+        self.auth.save(saved)
+        self.assertTrue(self.auth.status(config)['connected'])
+        self.auth.disconnect()
+        self.assertFalse(self.auth.status(config)['connected'])
+
+    def test_actual_session_revalidates_vault_instead_of_using_public_cache(self):
+        self.save()
+        config = {'google_auth_mode': 'oauth', 'google_oauth_client': str(self.path)}
+        self.assertTrue(self.auth.status(config)['connected'])
+        with patch('shoko.google_auth.protect', side_effect=fake_protect) as protect:
+            session = self.auth.session(config)
+            session.close()
+            self.assertEqual(protect.call_count, 1)
+        self.auth.vault.write_text('{"dpapi":"invalid"}', encoding='utf-8')
+        with self.assertRaises(AppError):
+            self.auth.session(config)
+
+    def test_cached_status_is_invalidated_when_oauth_client_changes(self):
+        self.save()
+        config = {'google_auth_mode': 'oauth', 'google_oauth_client': str(self.path)}
+        self.assertTrue(self.auth.status(config)['connected'])
+        self.configuration['installed']['client_secret'] = 'different-client-secret'
+        self.path.write_text(json.dumps(self.configuration), encoding='utf-8')
+        self.assertFalse(self.auth.status(config)['connected'])
+
+    def test_concurrent_status_polls_only_decrypt_once(self):
+        self.save()
+        config = {'google_auth_mode': 'oauth', 'google_oauth_client': str(self.path)}
+        results = []
+        with patch('shoko.google_auth.protect', side_effect=fake_protect) as protect:
+            threads = [threading.Thread(target=lambda: results.append(self.auth.status(config))) for _ in range(20)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(2)
+            self.assertEqual(len(results), 20)
+            self.assertTrue(all(result['connected'] for result in results))
+            self.assertEqual(protect.call_count, 1)
+
     def test_changed_oauth_client_cannot_reuse_old_account(self):
         self.save()
         self.configuration['installed']['client_secret'] = 'different'

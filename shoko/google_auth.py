@@ -130,11 +130,29 @@ class GoogleAuth:
         self.store = store
         self.vault = store.root / 'sessions' / 'google.vault'
         self.lock = threading.RLock()
+        # Public UI state contains no credentials. Do not decrypt the secret vault
+        # on every 1.5-second UI poll; real operations still call load() directly.
+        self._status_key = None
+        self._status_value = None
+
+    def _status_signature(self, path):
+        signature = [str(path)]
+        for file in (self.vault, Path(path or '')):
+            try:
+                stat = file.stat()
+                signature.append((stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino))
+            except OSError:
+                signature.append(None)
+        return tuple(signature)
+
+    def _clear_status(self):
+        self._status_key = self._status_value = None
 
     def save(self, value):
         with self.lock:
             encrypted = protect(json.dumps(value, ensure_ascii=False).encode('utf-8'))
             atomic_json(self.vault, {'format': 1, 'dpapi': base64.b64encode(encrypted).decode('ascii')})
+            self._clear_status()
 
     def load(self, path):
         expected = digest(client_config(path))
@@ -158,11 +176,18 @@ class GoogleAuth:
     def status(self, config):
         if config.get('google_auth_mode', 'service_account') != 'oauth':
             return {'connected': False, 'email': '', 'message': 'Выбран сервисный аккаунт'}
-        try:
-            saved = self.load(config.get('google_oauth_client', ''))
-            return {'connected': True, 'email': saved['email'], 'message': 'Вход сохранён'}
-        except AppError as exc:
-            return {'connected': False, 'email': '', 'message': str(exc)}
+        path = config.get('google_oauth_client', '')
+        with self.lock:
+            key = self._status_signature(path)
+            if key == self._status_key and self._status_value is not None:
+                return dict(self._status_value)
+            try:
+                saved = self.load(path)
+                result = {'connected': True, 'email': saved['email'], 'message': 'Вход сохранён'}
+            except AppError as exc:
+                result = {'connected': False, 'email': '', 'message': str(exc)}
+            self._status_key, self._status_value = key, result
+            return dict(result)
 
     def session(self, config):
         saved = self.load(config.get('google_oauth_client', ''))
@@ -179,6 +204,7 @@ class GoogleAuth:
     def disconnect(self):
         with self.lock:
             self.vault.unlink(missing_ok=True)
+            self._clear_status()
 
     def connect(self, path, cancelled, progress=lambda text: None, timeout=180):
         if cancelled.is_set():
