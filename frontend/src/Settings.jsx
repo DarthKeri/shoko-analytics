@@ -1,16 +1,17 @@
-import React,{useState} from 'react';
+import React,{useEffect,useState} from 'react';
 import {action} from './api.js';
 import {Button,FileField,Errors,Activity,Spinner,Tabs,timeText} from './components.jsx';
 import GoogleConnection from './GoogleConnection.jsx';
 
 const today=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'});
 
-export default function Settings({data,refresh,wizard=false,onFinish,onRestart}){
+export default function Settings({data,refresh,wizard=false,onFinish,onRestart,onPreviewAppearance}){
   const [form,setForm]=useState(data.config),[confirmed,setConfirmed]=useState(Boolean(data.target_allowed));
   const [error,setError]=useState(''),[message,setMessage]=useState(''),[step,setStep]=useState(0);
   const [root,setRoot]=useState(data.root),[pending,setPending]=useState(false),[checking,setChecking]=useState('');
   const [tab,setTab]=useState(data.state.operation==='google'?'google':'files');
   const [auth,setAuth]=useState({api_id:'',api_hash:'',phone:'',code:'',password:''});
+  useEffect(()=>{onPreviewAppearance?.(form.appearance||'classic');return()=>onPreviewAppearance?.(null)},[form.appearance,onPreviewAppearance]);
   const busy=pending||['preparing','writing','checking','connecting'].includes(data.state.phase);
   const set=(key,value)=>{setForm(f=>({...f,[key]:value}));setError('');setMessage('');if(['target','target_mode'].includes(key))setConfirmed(false)};
 
@@ -62,9 +63,14 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart})
     return <div className="settings-check" role="status" aria-live="polite" data-source={source}>{running?<span><Spinner/> Проверка…</span>:<><span>{result.ok?'✓':'✕'} {result.message}</span><small>{timeText(result.checked)}</small></>}</div>;
   };
   return <section className="sd-page settings-page"><h2>{wizard?'Настройка приложения':'Настройки'}</h2>
-    {!wizard&&<Tabs label="Разделы настроек" value={tab} onChange={setTab} disabled={busy} items={[{id:'files',label:'Excel'},{id:'google',label:'Google'},{id:'telegram',label:'Telegram'},{id:'general',label:'Приложение'}]}/>}
+    {!wizard&&<Tabs label="Разделы настроек" value={tab} onChange={setTab} disabled={busy} items={[{id:'files',label:'Excel'},{id:'google',label:'Google'},{id:'telegram',label:'Telegram'},{id:'general',label:'Общие'}]}/>}
     {pending&&<Activity label={checking?'Запуск проверки…':'Сохранение настроек…'}/>}
     {wizard&&<div className="wizard-steps" aria-label="Этапы настройки">{['Рабочая папка','Исходные файлы','Целевая копия','Выгрузка Гаража'].map((title,i)=><span key={title} aria-current={step===i?'step':undefined}>{i+1}. {title}</span>)}</div>}
+    {visible(0)&&<div className="settings-group appearance-group"><h3 id="appearance-heading">Вид интерфейса</h3>
+      <div className="appearance-options" role="radiogroup" aria-labelledby="appearance-heading">{[{id:'classic',title:'Стандартный',description:'Текущий чёрный интерфейс'},{id:'apple',title:'Apple HIG',description:'Графитовые панели и сгруппированные элементы'}].map(item=><label key={item.id} className="appearance-option" data-selected={(form.appearance||'classic')===item.id}>
+        <input type="radio" name="appearance" value={item.id} checked={(form.appearance||'classic')===item.id} disabled={busy} onChange={()=>set('appearance',item.id)}/>
+        <span className={'appearance-sample appearance-sample-'+item.id} aria-hidden="true"><i/><span><b/><b/><b/></span></span><span className="appearance-copy"><strong>{item.title}</strong><small>{item.description}</small></span>
+      </label>)}</div><p className="sd-muted settings-hint">Вид меняется сразу. Чтобы сохранить выбор, нажмите «Сохранить настройки».</p></div>}
     {visible(0)&&<div className="settings-group"><h3>Рабочая папка</h3>
       {wizard&&!data.config.initialized?<FileField label="Расположение данных приложения" value={root} kind="folder" disabled={busy} onChange={setRoot} onError={setError}/>:<div className="sd-setting"><div className="sd-setting-copy">{data.root}</div><Button disabled={busy} onClick={()=>request('open-folder')}>Открыть папку</Button></div>}
       <p className="sd-muted">Здесь сохраняются настройки, планы, копии таблиц и журнал.</p></div>}

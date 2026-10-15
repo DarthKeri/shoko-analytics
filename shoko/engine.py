@@ -16,7 +16,7 @@ from .google_auth import GoogleAuth, client_config
 from .plans import save_plan, load_plan
 
 STEPS = ['Проверка файлов и доступа', 'Чтение исходных данных', 'Получение CSV', 'Подготовка изменений']
-CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'google_auth_mode', 'google_oauth_client', 'developer', 'telegram_mode', 'telegram_bot', 'telegram_timeout', 'last_url', 'last_date'}
+CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'google_auth_mode', 'google_oauth_client', 'developer', 'appearance', 'telegram_mode', 'telegram_bot', 'telegram_timeout', 'last_url', 'last_date'}
 
 
 def resolved(value, processing_date):
@@ -62,6 +62,8 @@ class Engine:
                 raise AppError('Неверный тип подключения.')
             if candidate['google_auth_mode'] not in ('oauth', 'service_account'):
                 raise AppError('Неверный способ входа Google.')
+            if candidate['appearance'] not in ('classic', 'apple'):
+                raise AppError('Неизвестный вид интерфейса. Выберите Стандартный или Apple HIG.')
             try:
                 candidate['telegram_timeout'] = max(15, min(150, int(candidate['telegram_timeout'])))
             except (TypeError, ValueError):

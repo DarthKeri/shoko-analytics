@@ -35,6 +35,27 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(list((self.root / 'backups').iterdir()), [])
         self.assertEqual(len(list(self.root.glob('settings*'))), 1)
 
+    def test_appearance_survives_restart_without_touching_sources_or_backups(self):
+        self.assertEqual(self.engine.config()['appearance'], 'classic')
+        with patch.object(self.engine, 'check_one') as check, patch.object(self.engine.google, 'session') as session:
+            self.engine.save_settings({'appearance': 'apple', 'prostoi': 'keep.xlsx'})
+            check.assert_not_called()
+            session.assert_not_called()
+        self.engine.close()
+        self.engine = Engine(self.root)
+        self.assertEqual(self.engine.config()['appearance'], 'apple')
+        self.assertEqual(self.engine.config()['prostoi'], 'keep.xlsx')
+        self.assertEqual(self.engine.store.copies(), [])
+        self.assertEqual(len(list(self.root.glob('settings*'))), 1)
+
+    def test_invalid_appearance_leaves_saved_settings_unchanged(self):
+        self.engine.save_settings({'prostoi': 'keep.xlsx'})
+        before = file_hash(self.engine.store.config_path)
+        with self.assertRaisesRegex(AppError, 'Неизвестный вид интерфейса'):
+            self.engine.save_settings({'appearance': 'unknown', 'prostoi': 'changed.xlsx'})
+        self.assertEqual(file_hash(self.engine.store.config_path), before)
+        self.assertEqual(self.engine.config()['prostoi'], 'keep.xlsx')
+
     def test_finish_incomplete_setup_never_checks_network_or_files(self):
         with patch.object(self.engine, 'check_one') as check:
             self.engine.finish_setup()
