@@ -6,7 +6,9 @@ MVP локального Windows-приложения: ручной запуск
 
 Откройте `Shoko Analytics.lnk` в папке проекта или `Запустить.cmd`. Само приложение находится в `dist/ShokoAnalytics/ShokoAnalytics.exe`.
 
-Сохраняйте всю папку `dist/ShokoAnalytics`: рядом с EXE лежат необходимые библиотеки. Установка Python и Node пользователю готовой сборки не нужна. Нужен Windows 10/11 x64 с Microsoft Edge WebView2 Runtime.
+Сохраняйте всю папку `dist/ShokoAnalytics`: рядом с EXE находятся `app` с файлами программы и `runtime` с официальным Python 3.13.16 и библиотеками. Установка Python и Node пользователю готовой сборки не нужна. Нужен Windows 10/11 x64 с Microsoft Edge WebView2 Runtime и .NET Framework 4.8.
+
+Готовая поставка больше не использует PyInstaller: небольшой EXE запускает отдельный Python с действительной подписью Python Software Foundation. Собственный EXE не подписан; подпись Python не выдаётся за подпись Shoko. [Устройство поставки и проверка Kaspersky](docs/WINDOWS_DISTRIBUTION.md).
 
 По умолчанию рабочая папка — `%LOCALAPPDATA%/ShokoAnalytics`; она создаётся автоматически. При первой настройке можно выбрать другую. В ней находятся настройки, планы, исходные CSV, копии и журнал. Фоновый автозапуск не используется: локальный сервер доступен только на `127.0.0.1` во время работы окна и закрывается вместе с приложением.
 
@@ -47,13 +49,13 @@ MVP локального Windows-приложения: ручной запуск
 
 ## Разработка
 
-Python 3.12, Node 24, React/Vite, pywebview/WebView2. Запуск сборки из PowerShell:
+Python 3.13, Node 24, React/Vite, pywebview/WebView2, компилятор C# из .NET Framework Windows. Запуск сборки из PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools/build.ps1 -Python python
+powershell -File tools/build.ps1 -Python python
 ```
 
-Скрипт создаёт окружение, устанавливает зависимости, собирает UI, выполняет тесты, собирает EXE и создаёт ярлык в папке проекта. Параметр `tools/create-shortcut.ps1 -Desktop` создаёт ярлык на рабочем столе.
+Скрипт создаёт окружение, собирает UI, проверяет SHA256 и подписи официального Python, устанавливает закреплённые runtime-зависимости, собирает запускающий EXE и выполняет тесты на Python из готовой поставки. После smoke-проверки и сверки манифеста сборка заменяется, прежняя папка сохраняется в `build` для отката. Ярлык создаётся в папке проекта; `tools/create-shortcut.ps1 -Desktop` создаёт ярлык на рабочем столе. `tools/build-portable.ps1 -StageOnly` готовит проверяемый кандидат без замены установленного приложения. Старый `ShokoAnalytics.spec` оставлен только для сравнения прежней упаковки и в обычной сборке не используется.
 
 Для проверки интерфейса разработчиком:
 
