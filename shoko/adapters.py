@@ -1,5 +1,6 @@
 import copy
 import csv
+import gzip
 import json
 import math
 import os
@@ -17,6 +18,35 @@ LIVE_ID = '1HzoNqo_7x1RE_4ADegdW46r7qKhUl9xrKi6j1DXEiTQ'
 PROTECTED_ARCHIVE = Path(r'C:\Users\krivov\Desktop\shoko\ScriptExcel')
 MAX_CELLS = 2_000_000
 MAX_GOOGLE_WRITE_BYTES = 12_000_000
+GOOGLE_WRITE_TIMEOUT = (45, 180)
+
+
+def google_exception_chain(exc):
+    pending, seen = [exc], set()
+    while pending and len(seen) < 20:
+        value = pending.pop(0)
+        if not isinstance(value, BaseException) or id(value) in seen:
+            continue
+        seen.add(id(value))
+        yield value
+        pending.extend([value.__cause__, value.__context__, getattr(value, 'reason', None)])
+        pending.extend(arg for arg in value.args if isinstance(arg, BaseException))
+
+
+def google_transport_code(exc):
+    # Exception text may contain request bodies, URLs or credentials. Only emit
+    # bounded Python type names and integer OS error codes, never repr/str(exc).
+    parts = []
+    for value in google_exception_chain(exc):
+        name = type(value).__name__
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]{0,63}', name):
+            name = 'Error'
+        codes = [f'{key}={getattr(value, key)}' for key in ('errno', 'winerror')
+                 if type(getattr(value, key, None)) is int]
+        part = name + ('(' + ','.join(codes) + ')' if codes else '')
+        if part not in parts:
+            parts.append(part)
+    return ' / '.join(parts)
 
 
 def scalar(value):
@@ -244,13 +274,10 @@ def google_request_error(exc):
     """Classify failures without exposing keys, request JWTs or response payloads."""
     from requests.exceptions import SSLError, Timeout, ConnectionError
     from google.auth.exceptions import RefreshError
-    chain, seen, value = [], set(), exc
-    while value is not None and id(value) not in seen:
-        seen.add(id(value)); chain.append(value)
-        value = value.__cause__ or value.__context__
+    chain = list(google_exception_chain(exc))
     if any(isinstance(item, SSLError) for item in chain):
         return 'Google: не удалось проверить HTTPS-сертификат. Проверьте доверенные сертификаты Windows, антивирус или прокси.'
-    if any(isinstance(item, Timeout) for item in chain):
+    if any(isinstance(item, (Timeout, TimeoutError)) for item in chain):
         return 'Google не ответил вовремя. Подключение: до 10 секунд, ожидание данных: до 45 секунд на запрос. Повторите проверку.'
     if any(isinstance(item, ConnectionError) for item in chain):
         return 'Не удалось установить соединение с Google. Проверьте интернет, DNS и прокси.'
@@ -284,8 +311,12 @@ class GoogleTarget:
             response = self.session.request(method, self.base + suffix, timeout=timeout, **kwargs)
         except Exception as exc:
             message = google_request_error(exc)
-            if method == 'POST' and 'не ответил вовремя' in message:
-                message = f'Google не подтвердил результат записи вовремя (ожидание до {timeout[1]} секунд). Проверьте таблицу и копию; автоматический повтор не выполняется.'
+            if method == 'POST' and suffix == ':batchUpdate':
+                message = ('Google не подтвердил результат записи. Соединение или передача: '
+                           f'до {timeout[0]} секунд, ожидание ответа: до {timeout[1]} секунд. '
+                           'Данные могли быть записаны. Проверьте таблицу и резервную копию; '
+                           'автоматический повтор не выполняется.')
+            message += ' Код: ' + google_transport_code(exc) + '.'
             raise AppError(message) from None
         if response.status_code >= 400:
             from .google_errors import http_error
@@ -391,7 +422,20 @@ class GoogleTarget:
     def write(self, plan, prepared=None):
         payload = prepared if prepared is not None else self.prepare_write(plan)
         if payload:
-            self.request('POST', ':batchUpdate', data=payload, headers={'Content-Type': 'application/json; charset=utf-8'}, timeout=(10, 180))
+            # Same atomic batch and exact reviewed cells. Gzip reduces network
+            # upload volume; this is not a second request or a partial write.
+            headers = {'Content-Type': 'application/json; charset=utf-8'}
+            body = payload
+            if len(payload) >= 64_000:
+                compressed = gzip.compress(payload, compresslevel=6, mtime=0)
+                if len(compressed) < len(payload):
+                    body = compressed
+                    headers['Content-Encoding'] = 'gzip'
+            report = getattr(self, 'report', lambda text: None)
+            report(f'Отправляем {len(plan["changes"])} подтверждённых изменений: '
+                   f'{len(body) / 1_000_000:.2f} МБ по сети из {len(payload) / 1_000_000:.2f} МБ JSON. '
+                   'Ожидание ответа Google — до 180 секунд.')
+            self.request('POST', ':batchUpdate', data=body, headers=headers, timeout=GOOGLE_WRITE_TIMEOUT)
 
     def verify(self, plan):
         result = self.snapshot()

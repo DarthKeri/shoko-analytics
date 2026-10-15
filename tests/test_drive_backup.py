@@ -235,6 +235,27 @@ class GoogleWriteGateTests(unittest.TestCase):
         self.assertEqual(self.engine.state['phase'], 'error')
         self.assertEqual(self.engine.store.copies()[0]['status'], 'failed')
 
+    def test_write_connection_failure_keeps_backup_and_never_retries(self):
+        self.adapter.write.side_effect = AppError('Google не подтвердил результат записи. Код: ConnectionError / TimeoutError.')
+        self.write()
+        self.adapter.write.assert_called_once()
+        self.adapter.verify.assert_not_called()
+        self.assertEqual(self.engine.store.copies()[0]['status'], 'verified')
+        self.assertEqual(self.engine.state['phase'], 'error')
+        self.assertIn('Запись изменений:', self.engine.state['error'])
+        history = self.engine.public_state()['history'][0]
+        self.assertEqual(history['status'], 'uncertain')
+        self.assertIn('ConnectionError / TimeoutError', history['message'])
+        with self.assertRaises(AppError):
+            self.engine.write(self.plan['id'], self.plan['checksum'])
+
+    def test_verification_failure_is_distinct_from_write_failure(self):
+        self.adapter.verify.side_effect = AppError('Не удалось прочитать Google.')
+        self.write()
+        self.adapter.write.assert_called_once()
+        self.assertIn('Сверка результата:', self.engine.state['error'])
+        self.assertEqual(self.engine.store.copies()[0]['status'], 'verified')
+
     def test_preflight_failure_creates_no_backup_and_sends_no_write(self):
         self.adapter.prepare_write.side_effect = AppError('Объём изменений превышает предел')
         self.write()

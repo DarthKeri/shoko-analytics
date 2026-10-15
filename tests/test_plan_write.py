@@ -59,8 +59,58 @@ class GooglePlanWriteTests(unittest.TestCase):
         self.assertEqual(len(cells_from(payload)), 176786)
         with patch.object(self.adapter, 'request') as request:
             self.adapter.write(plan_for(changes), prepared=payload)
-        request.assert_called_once_with('POST', ':batchUpdate', data=payload,
-                                       headers={'Content-Type': 'application/json; charset=utf-8'}, timeout=(10, 180))
+        request.assert_called_once()
+        call = request.call_args
+        self.assertEqual(call.args, ('POST', ':batchUpdate'))
+        self.assertEqual(call.kwargs['timeout'], (45, 180))
+        self.assertEqual(call.kwargs['headers'], {'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip'})
+        self.assertEqual(gzip.decompress(call.kwargs['data']), payload)
+        self.assertLess(len(call.kwargs['data']), len(payload) // 4)
+
+    def test_small_batch_remains_plain_json_and_keeps_raw_text(self):
+        plan = plan_for([{'sheet': TARGET, 'row': 1, 'col': 1, 'after': '=literal'}])
+        payload = self.adapter.prepare_write(plan)
+        with patch.object(self.adapter, 'request') as request:
+            self.adapter.write(plan, prepared=payload)
+        self.assertEqual(request.call_args.kwargs['data'], payload)
+        self.assertNotIn('Content-Encoding', request.call_args.kwargs['headers'])
+        self.assertEqual(cells_from(payload), {(9, 1, 1): {'stringValue': '=literal'}})
+
+    def test_http_upload_has_correct_gzip_header_length_and_exact_cells(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        import requests
+        received = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers['Content-Length']))
+                received.append((self.headers['Content-Encoding'], body))
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', '2')
+                self.end_headers()
+                self.wfile.write(b'{}')
+        server = HTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        plan = plan_for([{'sheet': TARGET, 'row': r, 'col': c, 'after': '' if c == 1 else '=text()'}
+                         for r in range(1, 1500) for c in (1, 2)])
+        payload = self.adapter.prepare_write(plan)
+        try:
+            self.adapter.base = f'http://127.0.0.1:{server.server_port}/fixture'
+            with requests.Session() as session:
+                session.trust_env = False  # localhost fixture only; production proxy untouched
+                self.adapter.session = session
+                self.adapter.write(plan, prepared=payload)
+            self.assertEqual(len(received), 1)
+            self.assertEqual(received[0][0], 'gzip')
+            self.assertEqual(gzip.decompress(received[0][1]), payload)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(5)
 
     def test_oversize_is_rejected_before_any_network_request(self):
         plan = plan_for([{'sheet': TARGET, 'row': 1, 'col': 1, 'after': 'x' * MAX_GOOGLE_WRITE_BYTES}])

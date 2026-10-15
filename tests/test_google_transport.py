@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 from requests.exceptions import SSLError, ReadTimeout, ConnectTimeout, ConnectionError
 from google.auth.exceptions import TransportError, RefreshError
+from urllib3.exceptions import ProtocolError
 from shoko.adapters import GoogleTarget
 from shoko.storage import AppError
 from shoko.calculation import TARGET
@@ -49,6 +50,37 @@ class GoogleTransportTests(unittest.TestCase):
         adapter.session.request.return_value = SimpleNamespace(status_code=200, json=lambda: {'sheets': [{'properties': {'title': 'Other'}}]})
         with self.assertRaisesRegex(AppError, TARGET):
             adapter.check()
+
+    def test_nested_socket_upload_timeout_is_sanitized_and_not_retried(self):
+        secret = 'fixture-jwt-and-private-payload'
+        error = ConnectionError(ProtocolError(secret, TimeoutError(secret)))
+        adapter = self.adapter(error)
+        with self.assertRaises(AppError) as caught:
+            adapter.request('POST', ':batchUpdate', data=b'fixture', timeout=(45, 180))
+        text = str(caught.exception)
+        self.assertIn('не подтвердил результат записи', text)
+        self.assertIn('Данные могли быть записаны', text)
+        self.assertIn('45 секунд', text)
+        self.assertIn('180 секунд', text)
+        self.assertIn('автоматический повтор не выполняется', text)
+        self.assertIn('ConnectionError / ProtocolError / TimeoutError', text)
+        self.assertNotIn(secret, text)
+        adapter.session.request.assert_called_once()
+
+    def test_connection_reset_keeps_numeric_code_without_exception_text(self):
+        adapter = self.adapter(ConnectionError(ConnectionResetError(10054, 'fixture-secret-url')))
+        with self.assertRaises(AppError) as caught:
+            adapter.request('POST', ':batchUpdate', timeout=(45, 180))
+        self.assertIn('errno=10054', str(caught.exception))
+        self.assertNotIn('fixture-secret-url', str(caught.exception))
+        adapter.session.request.assert_called_once()
+
+    def test_nested_builtin_timeout_during_get_is_recognized(self):
+        adapter = self.adapter(ConnectionError(ProtocolError('secret', TimeoutError('secret'))))
+        with self.assertRaises(AppError) as caught:
+            adapter.request('GET')
+        self.assertIn('не ответил вовремя', str(caught.exception))
+        self.assertNotIn('secret', str(caught.exception))
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows system trust integration')
     def test_windows_entrypoint_keeps_tls_verification(self):

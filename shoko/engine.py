@@ -352,6 +352,7 @@ class Engine:
             self.store.copy(backup['id'])
             self.store.log('INFO', 'Резервная копия сохранена и проверена: ' + backup['id'])
             # Recheck after the potentially slow backup, immediately before writing.
+            self.store.log('INFO', 'После копирования повторно проверяем актуальность таблицы. Запись ещё не начата.')
             if adapter.snapshot()['fingerprint'] != current['fingerprint']:
                 raise AppError('Целевая таблица изменилась во время создания копии. Подготовьте новый план.')
             if cloud and cloud.metadata(cloud.source)['version'] != backup['source_version']:
@@ -360,10 +361,18 @@ class Engine:
             result = dict(id=identity, created=stamp(), date=approved['date'], status='writing', changes=len(approved['changes']), backup=backup['id'], message='Запись и сверка')
             result_path = self.store.root / 'plans' / (identity + '.result.json')
             atomic_json(result_path, result)
+            stage = 'Запись изменений'
             try:
                 self.set_phase(step=2)
+                def report(message):
+                    self.set_phase(detail=message)
+                    self.store.log('INFO', message)
+                adapter.report = report
+                self.store.log('INFO', 'Начинаем запись подтверждённого плана. Резервная копия проверена.')
                 adapter.write(approved, prepared=prepared)
-                self.set_phase(step=3)
+                stage = 'Сверка результата'
+                self.store.log('INFO', 'Запрос записи завершён. Читаем таблицу для сверки.')
+                self.set_phase(step=3, detail='')
                 adapter.verify(approved)
                 result.update(status='done', message='Обновление завершено, результат проверен.')
                 atomic_json(result_path, result)
@@ -372,9 +381,11 @@ class Engine:
                 self.set_phase(phase='done', step=4, error='', plan_id='')
                 self.store.log('INFO', 'Обновление завершено. Записанные значения сверены чтением.')
             except Exception as exc:
-                result.update(status='uncertain', message='Запись или сверка не завершилась. Проверьте цель; резервная копия сохранена.')
+                reason = str(exc) if isinstance(exc, AppError) else 'Операция не завершена.'
+                message = f'{stage}: {reason} Резервная копия сохранена. Подготовьте новый план после проверки таблицы.'
+                result.update(status='uncertain', message=message)
                 atomic_json(result_path, result)
-                raise exc
+                raise AppError(message) from None
         return self.launch('write', work)
 
     def create_local_copy(self, source):
