@@ -7,8 +7,8 @@
 #shoko-dark aside{padding:24px 14px 18px}
 #shoko-dark .sd-nav{padding:11px 9px;gap:9px;font-size:12px;font-weight:500}
 #shoko-dark .sd-nav[aria-current=page]{background:var(--sd-selected);font-weight:500}
-#shoko-dark .sd-logo-frame{width:36px}
-#shoko-dark .sd-logo{left:-115.7px}
+#shoko-dark .sd-logo-frame{width:55px;height:24px}
+#shoko-dark .sd-logo{left:-106.2px;top:-8.4px}
 #shoko-dark .sd-brand-sub{font-size:11px}
 #shoko-dark [data-screen=update] h2{font-size:25px;font-weight:500;letter-spacing:-.7px;margin:0}
 #shoko-dark [data-screen=update]>.sd-head{margin-bottom:20px}
