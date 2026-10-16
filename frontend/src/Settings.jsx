@@ -54,14 +54,6 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
       if(onReset)onReset(saved);else await refresh();
     }catch(e){setResetOpen(false);setError(e.message);await refresh().catch(()=>{})}finally{setPending(false)}
   }
-  async function createCopy(){
-    setError('');setPending(true);
-    try{
-      const selected=await action('choose',{kind:'xlsx'});if(!selected.path)return;
-      const result=await action('create-copy',{source:selected.path});
-      set('target',result.path);setConfirmed(true);setMessage('Создана отдельная локальная копия');await refresh();
-    }catch(e){setError(e.message)}finally{setPending(false)}
-  }
   const visible=n=>wizard?step===n:({0:'general',1:'files',2:'google'}[n]===tab);
   const field=(label,key,kind='xlsx',example='')=><FileField label={label} kind={kind} example={example} value={form[key]} disabled={busy} onChange={v=>set(key,v)} onError={setError}/>;
   const status=source=>{
@@ -96,24 +88,18 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
       <Button disabled={busy} onClick={()=>check('csv')}>Проверить CSV</Button>{status('csv')}
     </div>}
     {visible(2)&&<div className="settings-group"><h3>Аккаунт Google</h3>
-      <GoogleConnection form={form} set={set} busy={busy} data={data} field={field} check={check} status={status} save={save} request={request}/>
-      {form.target_mode==='google'&&((form.google_auth_mode==='oauth'&&data.google_auth?.connected&&form.google_oauth_client===data.config.google_oauth_client)||form.google_auth_mode==='service_account')&&<>
+      <GoogleConnection form={form} busy={busy} data={data} save={save} request={request}/>
+      {form.target_mode==='google'&&form.google_auth_mode==='oauth'&&data.google_auth?.connected&&form.google_oauth_client===data.config.google_oauth_client&&<>
         <div className="settings-subgroup"><h3>Целевая таблица</h3>
-          {form.google_auth_mode==='oauth'?<DrivePicker kind="sheets" value={form.target} disabled={busy} onChange={v=>set('target',v)}/>:<label>Ссылка на таблицу<input type="text" value={form.target} disabled={busy} onChange={e=>set('target',e.target.value)}/></label>}
+          <DrivePicker kind="sheets" value={form.target} disabled={busy} onChange={v=>set('target',v)}/>
           <label className="sd-switch copy-confirm"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} disabled={busy}/>Это копия для тестов; разрешаю запись в неё</label>
           <Button disabled={busy} onClick={()=>check('target')}>Проверить таблицу</Button>{status('target')}
         </div>
         <div className="settings-subgroup"><h3>Папка резервных копий</h3>
-          {form.google_auth_mode==='oauth'?<DrivePicker kind="folders" value={form.google_backup_folder} disabled={busy} onChange={v=>set('google_backup_folder',v)}/>:<label>Ссылка на папку<input type="text" value={form.google_backup_folder||''} disabled={busy} onChange={e=>set('google_backup_folder',e.target.value)}/></label>}
+          <DrivePicker kind="folders" value={form.google_backup_folder} disabled={busy} onChange={v=>set('google_backup_folder',v)}/>
           <Button disabled={busy} onClick={()=>check('backup')}>Проверить папку</Button>{status('backup')}
         </div>
       </>}
-      {form.target_mode==='local'&&<details className="google-help"><summary>Локальная таблица Excel</summary>
-        {field('Копия книги с листом «Предложение цен»','target','xlsx','Анализ_конкурентов_копия.xlsx')}
-        <Button disabled={busy} onClick={createCopy}>Создать копию из шаблона</Button>
-        <label className="sd-switch copy-confirm"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} disabled={busy}/>Это копия для тестов; разрешаю запись в неё</label>
-        <Button disabled={busy} onClick={()=>check('target')}>Проверить таблицу</Button>{status('target')}
-      </details>}
     </div>}
     {!wizard&&tab==='general'&&<div className="settings-group"><h3>Дополнительно</h3><label className="sd-switch"><input type="checkbox" checked={form.developer} disabled={busy} onChange={e=>set('developer',e.target.checked)}/>Показывать вкладку разработчика</label>
       <Button disabled={busy} onClick={async()=>{if(await save())onRestart()}}>Повторить первичную настройку</Button>

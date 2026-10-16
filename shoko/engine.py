@@ -485,7 +485,7 @@ class Engine:
                 raise AppError('Дождитесь завершения текущей операции.')
             config = self.config()
             if config['google_auth_mode'] != 'oauth':
-                raise AppError('Выберите способ входа «Мой Google-аккаунт» в настройках.')
+                raise AppError('Нажмите «Войти через Google» в настройках, чтобы подключить аккаунт.')
             if step not in ('connect', 'disconnect', 'profile'):
                 raise AppError('Неизвестное действие входа Google.')
             if step == 'connect':

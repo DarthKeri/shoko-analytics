@@ -36,7 +36,7 @@ def client_config(path=''):
             raise ValueError()
         data = json.loads(file.read_text(encoding='utf-8-sig'))
     except (ValueError, TypeError, OSError):
-        raise AppError('Вход Google не настроен для этой сборки. Укажите OAuth-клиент Desktop app в дополнительных настройках Google или установите настроенную сборку.') from None
+        raise AppError('Вход Google не настроен для этой сборки. Установите сборку со встроенным подключением Google.') from None
     if not isinstance(data, dict):
         raise AppError('OAuth-файл должен содержать объект JSON клиента Desktop app.')
     if data.get('type') == 'service_account':
