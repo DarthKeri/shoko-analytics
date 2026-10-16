@@ -12,6 +12,7 @@ from .calculation import assemble_prostoi, calculate, PROSTOI, DRIVERS, TARGET, 
 from .drive_backup import DriveBackup
 from .google_auth import GoogleAuth, client_config
 from .plans import save_plan, load_plan
+from .sheet_backups import planned_backups
 from .garage import prepare_garage, comparison_before, formula_text
 from .validation import read_prostoi_source, read_bot_source, check_bot_source
 
@@ -35,6 +36,7 @@ class Engine:
         self.state = dict(phase='idle', step=-1, started='', error='', plan_id='', operation='')
         self.plan = None
         self.checks = {}
+        self.developer_results = {}
         self.worker = None
         self.store.log('INFO', 'Приложение запущено. Запись выполняется только после просмотра и подтверждения.')
         # Interrupted write is never declared successful after restart.
@@ -107,12 +109,13 @@ class Engine:
                 plan['sheets'] = [{'name': k, 'rows': len(v), 'columns': max(map(len, v), default=0), 'changes': sum(c['sheet'] == k for c in self.plan['changes'])} for k, v in self.plan['after'].items()]
                 plan['operations'] = self.plan.get('operations', [])
                 plan['garage'] = self.plan.get('garage')
+                plan['sheet_backups'] = self.plan.get('sheet_backups', [])
             try:
                 target_allowed = target_key(self.config()) in self.config()['allowed_targets']
             except AppError:
                 target_allowed = False
             return dict(target_allowed=target_allowed, config=self.config(), root=str(self.store.root), state=copy.deepcopy(self.state), checks=copy.deepcopy(self.checks), plan=plan,
-                        history=sorted(histories, key=lambda h: h['created'], reverse=True)[:100], copies=self.store.copies()[:100], logs=self.store.logs(), google_auth=self.google.status(self.config()))
+                        history=sorted(histories, key=lambda h: h['created'], reverse=True)[:100], copies=self.store.copies()[:100], logs=self.store.logs(), developer=copy.deepcopy(self.developer_results), google_errors=self.store.google_errors(), google_auth=self.google.status(self.config()))
 
     def plan_page(self, kind='changes', sheet='', offset=0):
         with self.lock:
@@ -145,7 +148,7 @@ class Engine:
             if self.busy():
                 raise AppError('Уже выполняется операция. Дождитесь её завершения.')
             self.cancelled.clear()
-            phase = {'prepare': 'preparing', 'write': 'writing', 'check': 'checking', 'google': 'connecting'}[operation]
+            phase = {'prepare': 'preparing', 'write': 'writing', 'check': 'checking', 'diagnostics': 'checking', 'google': 'connecting'}[operation]
             self.state.update(phase=phase, operation=operation, started=stamp(), error='', step=-1, detail='', current_source='')
             def work():
                 try:
@@ -302,6 +305,7 @@ class Engine:
                     raise AppError('Исходный файл изменился во время подготовки. Повторите обновление.')
             plan = dict(id=identity, date=processing_date, url=url, created=stamp(), rule='primary-legacy-v1+garage-v1',
                         before=before, after=after, changes=changes, sources=sources, config_digest=digest(self.config()), warnings=warnings, **garage_plan)
+            plan['sheet_backups'] = planned_backups(before, changes, garage_plan['operations'], derived=garage_plan.get('derived', []))
             if config['target_mode'] == 'google' and config['google_auth_mode'] == 'oauth':
                 plan['google_identity'] = self.google.identity(config)
             adapter.prepare_write(plan)  # Validate size before preview, approval or backup.
@@ -363,7 +367,7 @@ class Engine:
             if cloud and cloud.metadata(cloud.source)['version'] != backup['source_version']:
                 raise AppError('Google-таблица изменилась после создания копии. Подготовьте новый план.')
             self.set_phase(detail='')
-            result = dict(id=identity, created=stamp(), date=approved['date'], status='writing', changes=len(approved['changes']), backup=backup['id'], message='Запись и сверка')
+            result = dict(id=identity, created=stamp(), date=approved['date'], status='writing', changes=len(approved['changes']), backup=backup['id'], sheet_backups=approved.get('sheet_backups', []), message='Запись и сверка')
             result_path = self.store.root / 'plans' / (identity + '.result.json')
             atomic_json(result_path, result)
             stage = 'Запись изменений'
@@ -384,6 +388,7 @@ class Engine:
                 with self.lock:
                     self.plan = None  # approved plan is single-use
                 self.set_phase(phase='done', step=4, error='', plan_id='')
+                self.store.log('INFO', f'BF-копии листов созданы и проверены: {len(approved.get("sheet_backups", []))}.')
                 self.store.log('INFO', 'Обновление завершено. Записанные значения сверены чтением.')
             except Exception as exc:
                 reason = str(exc) if isinstance(exc, AppError) else 'Операция не завершена.'
@@ -405,6 +410,24 @@ class Engine:
             if file_hash(source) != file_hash(path):
                 raise AppError('Не удалось проверить созданную копию.')
             return {'path': str(path)}
+
+    def developer_action(self, kind):
+        if kind not in ('health', 'space', 'selftest'):
+            raise AppError('Неизвестная диагностика.')
+        with self.lock:
+            if not self.config()['developer']:
+                raise AppError('Включите страницу разработчика в настройках.')
+            previous = self.state['phase']
+            def work():
+                from .diagnostics import health, occupied_space
+                from .selftest import run_selftest
+                self.set_phase(detail={'health': 'Проверяем приложение', 'space': 'Подсчитываем занятое место', 'selftest': 'Проверяем встроенные примеры'}[kind])
+                result = health(self.store, self.google) if kind == 'health' else occupied_space(self.store.root) if kind == 'space' else run_selftest()
+                with self.lock:
+                    self.developer_results[kind] = result
+                self.store.log('INFO', {'health': 'Диагностика приложения завершена', 'space': 'Подсчёт места завершён', 'selftest': 'Тест встроенных примеров: ' + ('пройден' if result.get('ok') else 'есть ошибки')}[kind] + '. Пользовательские таблицы не изменялись.')
+                self.set_phase(phase='preview' if self.plan and previous == 'preview' else 'idle', detail='', error='')
+            return self.launch('diagnostics', work)
 
     def google_library(self, kind, query='', page_token=''):
         from .google_library import list_items

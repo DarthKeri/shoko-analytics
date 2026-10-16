@@ -167,3 +167,32 @@ html,body,#root{height:100%;min-height:0;overflow:hidden}
 #shoko-dark [data-screen=update] .sd-source-state{font-size:12px;line-height:1.6}
 #shoko-dark .update-sources{margin-bottom:0}
 @media(max-width:600px){#shoko-dark [data-screen=update] .sd-head{gap:4px}#shoko-dark [data-screen=update] .sd-head .sd-button{padding-left:0}#shoko-dark [data-screen=update] .sd-source{gap:6px 10px}#shoko-dark .drive-search{flex-wrap:wrap}#shoko-dark .account-card strong{font-size:14px}}
+
+/* Quiet launch page and developer tools within the existing dark themes. */
+#shoko-dark .launch-panel{width:100%;max-width:550px;margin:clamp(35px,8vh,85px) auto 20px;padding:28px;border:1px solid var(--sd-line);border-radius:10px;background:var(--sd-card,transparent)}
+#shoko-dark .launch-panel label{display:block;max-width:210px;font-size:14px}
+#shoko-dark .launch-actions{display:flex;justify-content:flex-end;gap:18px;margin-top:32px;flex-wrap:wrap}
+#shoko-dark .launch-progress{width:100%;max-width:550px;margin:0 auto}
+#shoko-dark .update-errors{margin-top:auto;padding-top:28px}
+#shoko-dark .sources-head{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:12px 0;color:var(--sd-muted);font-size:13px}
+#shoko-dark .source-full-path{white-space:normal;overflow-wrap:anywhere;line-height:1.6;font-size:12px}
+#shoko-dark .developer-page [role=tablist]{overflow-x:auto;flex-wrap:nowrap}
+#shoko-dark .developer-page [role=tablist] button{width:auto;flex:1;min-width:max-content;font-size:13px;padding:10px 14px}
+#shoko-dark .developer-section-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:12px 0 8px}
+#shoko-dark .developer-section-head h3{margin:0;font-size:17px}
+#shoko-dark .diagnostic-empty{padding:40px 0;font-size:14px}
+#shoko-dark .diagnostic-row{display:grid;grid-template-columns:18px minmax(150px,1fr) minmax(0,2fr);gap:12px;padding:16px 0;border-bottom:1px solid var(--sd-line);font-size:13px;overflow-wrap:anywhere}
+#shoko-dark .diagnostic-row strong{font-weight:500}#shoko-dark .diagnostic-row>span:last-child{color:var(--sd-muted)}
+#shoko-dark .google-errors article{border:1px solid var(--sd-line);padding:18px 20px;border-radius:8px;margin:12px 0}
+#shoko-dark .google-error-title{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+#shoko-dark .google-error-title time{color:var(--sd-muted);font-size:12px;white-space:nowrap}
+#shoko-dark .google-errors p,#shoko-dark .google-errors code,#shoko-dark .google-errors dl{font-size:13px;line-height:1.7;overflow-wrap:anywhere}
+#shoko-dark .google-errors dl>div{display:flex;justify-content:space-between;gap:20px}#shoko-dark .google-errors dt{color:var(--sd-muted)}#shoko-dark .google-errors dd{margin:0;text-align:right}
+#shoko-dark .test-summary{border:1px solid var(--sd-line);padding:16px;font-size:14px;border-radius:8px}
+#shoko-dark .space-summary{display:flex;gap:50px;margin:25px 0}#shoko-dark .space-summary>div{display:flex;flex-direction:column;gap:8px}
+#shoko-dark .space-summary span{font-size:13px;color:var(--sd-muted)}#shoko-dark .space-summary strong{font-size:24px;font-weight:500}
+#shoko-dark .space-row{display:grid;grid-template-columns:minmax(0,1fr) auto 110px;gap:20px;padding:16px 0;border-bottom:1px solid var(--sd-line);font-size:14px}
+#shoko-dark .space-row small{color:var(--sd-muted)}#shoko-dark .space-row strong{text-align:right;font-weight:500}
+#shoko-dark .sheet-backup-review{border:1px solid var(--sd-line);padding:16px 20px;margin:16px 0;border-radius:8px;font-size:13px;overflow-wrap:anywhere}
+#shoko-dark .sheet-backup-review p{margin:10px 0;line-height:1.6}
+@media(max-width:700px){#shoko-dark .launch-panel{padding:22px 18px;margin-top:30px}#shoko-dark .developer-section-head{align-items:flex-start;flex-direction:column}#shoko-dark .diagnostic-row{grid-template-columns:18px minmax(0,1fr);gap:8px}#shoko-dark .diagnostic-row>span:last-child{grid-column:2}#shoko-dark .google-error-title{flex-direction:column}#shoko-dark .google-errors dl>div{flex-direction:column;gap:2px;margin:10px 0}#shoko-dark .google-errors dd{text-align:left}#shoko-dark .space-row{grid-template-columns:minmax(0,1fr) auto;gap:6px}#shoko-dark .space-row small{grid-column:1;grid-row:2}#shoko-dark .space-row strong{grid-column:2;grid-row:1/span 2}#shoko-dark .sources-head{flex-wrap:wrap}}

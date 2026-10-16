@@ -101,6 +101,8 @@ class Server:
     def action(self, body):
         action = body.get('action')
         engine = self.engine
+        if action == 'developer':
+            return engine.developer_action(body.get('kind'))
         if action == 'settings':
             return engine.save_settings(body.get('values', {}))
         if action == 'finish-setup':

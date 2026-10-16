@@ -54,14 +54,25 @@ def google_transport_code(exc):
 def google_http_request(session, method, url, timeout=(10, 45), report=lambda text: None, **kwargs):
     """Retry only transient GET failures. Never replay any mutating request."""
     from requests.exceptions import ConnectionError, Timeout, SSLError
+    from .google_diagnostics import event
+    callback = getattr(session, 'shoko_diagnostics', None)
+    def record(**values):
+        if callable(callback):
+            try: callback(event(method, url, timeout, time.monotonic()-started, attempt+1, attempts, **values))
+            except (OSError, ValueError): pass
     attempts = 3 if method.upper() == 'GET' else 1
     for attempt in range(attempts):
+        started = time.monotonic()
         try:
-            return session.request(method, url, timeout=timeout, **kwargs)
+            response = session.request(method, url, timeout=timeout, **kwargs)
+            if response.status_code >= 400:
+                record(response=response)
+            return response
         except Exception as exc:
             chain = list(google_exception_chain(exc))
             transient = (any(isinstance(item, (ConnectionError, Timeout, TimeoutError)) for item in chain)
                          and not any(isinstance(item, SSLError) for item in chain))
+            record(transport=google_transport_code(exc), retry=attempt + 1 < attempts and transient)
             if attempt + 1 == attempts or not transient:
                 raise
             delay = 2 ** attempt
@@ -326,6 +337,11 @@ class LocalTarget:
         workbook = load_workbook(self.path)
         temp = self.path.with_name('.' + self.path.stem + '.' + uuid.uuid4().hex + '.xlsx')
         try:
+            for item in plan.get('sheet_backups', []):
+                if item['target'].casefold() in {n.casefold() for n in workbook.sheetnames}:
+                    raise AppError('BF-копия с таким именем уже существует. Подготовьте новый план.')
+                backup = workbook.copy_worksheet(workbook[item['source']])
+                backup.title = item['target']
             for op in plan.get('operations', []):
                 if op['kind'] == 'archive':
                     archive = workbook.copy_worksheet(workbook[op['source']])
@@ -364,6 +380,12 @@ class LocalTarget:
     def verify(self, plan):
         workbook = load_workbook(self.path, data_only=False)
         try:
+            from .sheet_backups import backup_matrix, verify_matrix
+            for item in plan.get('sheet_backups', []):
+                if item['target'] not in workbook.sheetnames:
+                    raise AppError('Не найдена BF-копия листа «' + item['source'] + '».')
+                actual = [[scalar(v) for v in row] for row in workbook[item['target']].values]
+                verify_matrix(actual, backup_matrix(plan['before']['sheets'][item['source']], 'local'), item['target'])
             for change in plan['changes']:
                 value = scalar(workbook[change['sheet']].cell(change['row'], change['col']).value)
                 if value != change['after']:
@@ -409,12 +431,14 @@ def google_request_error(exc):
 class GoogleTarget:
     def __init__(self, config, google_auth=None):
         self.id = guard_target(config)
+        diagnostics = getattr(getattr(google_auth, 'store', None), 'google_event', None)
         logger = getattr(getattr(google_auth, 'store', None), 'log', None)
         self.report = (lambda message: logger('WARNING', message)) if logger else (lambda message: None)
         if config.get('google_auth_mode', 'service_account') == 'oauth':
             if google_auth is None:
                 raise AppError('Вход Google недоступен. Перезапустите приложение и подключите аккаунт в настройках.')
             self.session = google_auth.session(config)
+            self.session.shoko_diagnostics = diagnostics
             self.base = 'https://sheets.googleapis.com/v4/spreadsheets/' + self.id
             return
         path = readable(config.get('credentials'), {'.json'})
@@ -423,6 +447,7 @@ class GoogleTarget:
         try:
             credentials = Credentials.from_service_account_file(str(path), scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'])
             self.session = AuthorizedSession(credentials)
+            self.session.shoko_diagnostics = diagnostics
         except Exception:
             raise AppError('credentials.json не является ключом сервисного аккаунта Google.') from None
         self.base = 'https://sheets.googleapis.com/v4/spreadsheets/' + self.id
@@ -467,10 +492,12 @@ class GoogleTarget:
             raise AppError('Шаблон Гаража превышает лимит MVP.')
         return name, rows
 
-    def snapshot(self, extra=()):
+    def snapshot(self, extra=(), only=None):
         meta = self.check()
         titles = {s['properties']['title'] for s in meta.get('sheets', [])}
-        names = managed_names(sorted(titles), extra)
+        names = [name for name in sorted(titles) if name in only] if only is not None else managed_names(sorted(titles), extra)
+        if not names:
+            return dict(mode='google', target=self.id, fingerprint=digest(meta), sheets={}, metadata=meta)
         merges = {s['properties']['title']: s.get('merges', []) for s in meta.get('sheets', [])}
         # Cell formatting can dwarf the actual values by gigabytes. Read only the
         # values needed for calculation and formulas needed for exact comparison.
@@ -520,6 +547,8 @@ class GoogleTarget:
         baseline = comparison_before(plan)
         sheet_ids = {name: item['id'] for name, item in plan['before']['sheets'].items()}
         used = set(sheet_ids.values()) | {s['properties']['sheetId'] for s in plan['before'].get('metadata', {}).get('sheets', [])}
+        from .sheet_backups import google_backup_requests
+        requests.extend(google_backup_requests(plan, used))
         for op in plan.get('operations', []):
             source_id = sheet_ids[op['source']]
             if op['kind'] == 'archive':
@@ -616,8 +645,27 @@ class GoogleTarget:
             self.request('POST', ':batchUpdate', data=body, headers=headers, timeout=GOOGLE_WRITE_TIMEOUT)
 
     def verify(self, plan):
+        if plan.get('sheet_backups'):
+            from .sheet_backups import backup_matrix, verify_matrix
+            copies = self.snapshot(only={b['target'] for b in plan['sheet_backups']})
+            for item in plan['sheet_backups']:
+                source = plan['before']['sheets'][item['source']]
+                actual = copies['sheets'].get(item['target'])
+                if not actual or actual['id'] == source['id']:
+                    raise AppError('Не найдена независимая BF-копия листа «' + item['source'] + '».')
+                if actual['rows'] != source['rows'] or actual['cols'] != source['cols']:
+                    raise AppError('Размер BF-копии не совпадает с исходным листом.')
+                strip = lambda merges: [{k: v for k, v in m.items() if k != 'sheetId'} for m in merges]
+                if strip(actual.get('merges', [])) != strip(source.get('merges', [])):
+                    raise AppError('Объединения ячеек BF-копии не совпадают с исходным листом.')
+                verify_matrix(actual['raw'], backup_matrix(source, 'google'), item['target'])
         result = self.snapshot(extra=plan['after']) if plan.get('operations') or plan.get('garage') else self.snapshot()
         baseline = comparison_before(plan)
+        renamed = {op['source']: op['target'] for op in plan.get('operations', []) if op['kind'] == 'rename'}
+        for name, original in plan['before']['sheets'].items():
+            active = result['sheets'].get(renamed.get(name, name))
+            if active and 'id' in original and active.get('id', original['id']) != original['id']:
+                raise AppError('Изменился идентификатор действующего листа «' + name + '».')
         for name in plan['after']:
             if name not in result['sheets']:
                 raise AppError(f'Ошибка сверки Google: отсутствует лист «{name}».')

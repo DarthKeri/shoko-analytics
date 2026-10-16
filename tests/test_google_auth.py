@@ -217,7 +217,7 @@ class GoogleAuthTests(unittest.TestCase):
         session = Mock()
         session.__enter__ = Mock(return_value=session)
         session.__exit__ = Mock(return_value=False)
-        session.get.return_value = SimpleNamespace(status_code=200, json=lambda: {'user': {'emailAddress': 'fixture@example.test'}})
+        session.request.return_value = SimpleNamespace(status_code=200, json=lambda: {'user': {'emailAddress': 'fixture@example.test'}})
         try:
             with patch('shoko.google_auth.InstalledAppFlow.from_client_config', side_effect=factory), patch('shoko.google_auth.webbrowser.open', side_effect=browser), patch('shoko.google_auth.AuthorizedSession', return_value=session):
                 result = self.auth.connect(str(self.path), threading.Event(), timeout=timeout)

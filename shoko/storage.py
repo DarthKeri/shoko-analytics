@@ -156,6 +156,20 @@ class Store:
             stream.seek(max(0, path.stat().st_size - 100_000))
             return stream.read().decode('utf-8', errors='replace')
 
+    def google_errors(self):
+        path = self.root / 'logs' / 'google-errors.json'
+        try:
+            with self.mutex:
+                data = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else []
+            return data[-100:] if isinstance(data, list) else []
+        except (OSError, ValueError):
+            return []
+
+    def google_event(self, event):
+        # Only the fixed-schema, sanitized event builder supplies these fields.
+        with self.mutex:
+            atomic_json(self.root / 'logs' / 'google-errors.json', (self.google_errors() + [event])[-100:])
+
     def copies(self):
         manifests = [json.loads(p.read_text(encoding='utf-8')) for p in (self.root / 'backups').glob('*/manifest.json')]
         return sorted([m for m in manifests if m['kind'] != 'settings'], key=lambda x: x['created'], reverse=True)

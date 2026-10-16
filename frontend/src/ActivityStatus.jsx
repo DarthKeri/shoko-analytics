@@ -8,7 +8,8 @@ export default function ActivityStatus({state,pending,elapsed,onCancelGoogle}){
   if(!pending&&!['preparing','writing','checking','connecting'].includes(state.phase))return null;
   const google=state.phase==='connecting'&&state.operation==='google';
   const profile=google&&state.auth_step==='profile';
-  const label=google?(profile?'Загрузка аккаунта Google':'Вход в Google'):{preparing:'Подготовка обновления',writing:'Обновление данных',checking:'Проверка подключения',connecting:'Подключение'}[state.phase]||'Выполняем действие';
-  const detail=google?state.detail:state.phase==='preparing'?(state.detail||preparation[state.step]):state.phase==='writing'?(state.detail||writing[state.step]):state.phase==='checking'?sources[state.current_source]:'';
+  const diagnostic=state.operation==='diagnostics';
+  const label=diagnostic?'Диагностика':google?(profile?'Загрузка аккаунта Google':'Вход в Google'):{preparing:'Подготовка обновления',writing:'Обновление данных',checking:'Проверка подключения',connecting:'Подключение'}[state.phase]||'Выполняем действие';
+  const detail=diagnostic?state.detail:google?state.detail:state.phase==='preparing'?(state.detail||preparation[state.step]):state.phase==='writing'?(state.detail||writing[state.step]):state.phase==='checking'?sources[state.current_source]:'';
   return <Activity label={label} detail={detail||'Пожалуйста, подождите…'} elapsed={pending&&state.phase==='idle'?undefined:elapsed}>{google&&!profile&&<Button disabled={pending} onClick={onCancelGoogle}>Отменить вход</Button>}</Activity>;
 }

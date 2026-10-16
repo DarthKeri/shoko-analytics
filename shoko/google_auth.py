@@ -120,6 +120,7 @@ class SavedSession(AuthorizedSession):
     def __init__(self, credentials, owner, saved, path=''):
         super().__init__(credentials, refresh_timeout=45)
         self.owner, self.saved, self.path = owner, saved, path
+        self.shoko_diagnostics = owner.store.google_event
 
     def request(self, *args, **kwargs):
         previous = self.credentials.to_json()
@@ -287,7 +288,9 @@ class GoogleAuth:
                 if not credentials.refresh_token or not set(SCOPES).issubset(granted):
                     raise AppError('Google не выдал полный доступ для повторных запусков. Повторите вход и разрешите Drive и таблицы.')
                 with AuthorizedSession(credentials, refresh_timeout=45) as session:
-                    response = session.get('https://www.googleapis.com/drive/v3/about', params={'fields': 'user(emailAddress,displayName,photoLink)'}, timeout=(10, 45))
+                    from .adapters import google_http_request
+                    session.shoko_diagnostics = self.store.google_event
+                    response = google_http_request(session, 'GET', 'https://www.googleapis.com/drive/v3/about', params={'fields': 'user(emailAddress,displayName,photoLink)'}, timeout=(10, 45))
                     if response.status_code >= 400:
                         raise AppError(http_error(response))
                     user = response.json().get('user', {})

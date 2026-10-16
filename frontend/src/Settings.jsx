@@ -53,7 +53,7 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
       set('target',result.path);setConfirmed(true);setMessage('Создана отдельная локальная копия');await refresh();
     }catch(e){setError(e.message)}finally{setPending(false)}
   }
-  const visible=n=>wizard?step===n:({0:'general',1:'files',2:'google',3:'files'}[n]===tab);
+  const visible=n=>wizard?step===n:({0:'general',1:'files',2:'google'}[n]===tab);
   const field=(label,key,kind='xlsx',example='')=><FileField label={label} kind={kind} example={example} value={form[key]} disabled={busy} onChange={v=>set(key,v)} onError={setError}/>;
   const status=source=>{
     const result=data.checks[source];
