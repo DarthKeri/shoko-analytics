@@ -31,7 +31,7 @@ class SettingsTests(unittest.TestCase):
         self.engine = Engine(self.root)
         self.assertTrue(self.engine.config()['initialized'])
         self.assertEqual(self.engine.config()['drivers'], 'C:/data/Начисление_08-26.xlsx')
-        self.assertEqual(self.engine.config()['telegram_bot'], '')
+        self.assertFalse(any(k.startswith('telegram_') for k in self.engine.config()))
         self.assertEqual(list((self.root / 'backups').iterdir()), [])
         self.assertEqual(len(list(self.root.glob('settings*'))), 1)
 
@@ -100,28 +100,6 @@ class SettingsTests(unittest.TestCase):
         self.engine.check('prostoi', paths['last_date']); self.wait()
         self.assertTrue(self.engine.checks['prostoi']['ok'])
         self.assertEqual(self.engine.state['error'], '')
-
-    def test_update_with_unconfigured_telegram_cannot_start_or_write(self):
-        paths = fixtures(Path(self.temp.name) / 'files')
-        before = file_hash(paths['target'])
-        self.engine.save_settings(dict(paths, telegram_mode='auto'))
-        self.engine.finish_setup()
-        with patch.object(self.engine, 'launch') as launch:
-            with self.assertRaisesRegex(AppError, 'Бот Telegram'):
-                self.engine.prepare('https://garage.example.test/fleet/1', paths['last_date'])
-            launch.assert_not_called()
-        self.assertEqual(file_hash(paths['target']), before)
-        self.assertIsNone(self.engine.plan)
-        self.assertEqual(self.engine.store.copies(), [])
-        self.engine.save_settings({'telegram_bot': '@fixture_bot'})
-        with patch('telethon.TelegramClient') as client:
-            self.engine.prepare('https://garage.example.test/fleet/1', paths['last_date'])
-            self.wait()
-            client.assert_not_called()
-        self.assertIn('Telegram не подключён', self.engine.state['error'])
-        self.assertEqual(file_hash(paths['target']), before)
-        self.assertIsNone(self.engine.plan)
-        self.assertEqual(self.engine.store.copies(), [])
 
     def test_old_settings_copies_are_hidden_but_excel_backups_remain(self):
         paths = fixtures(Path(self.temp.name) / 'files')

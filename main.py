@@ -61,6 +61,7 @@ def main():
                     if not window.create_confirmation_dialog('Отменить подготовку и закрыть?', 'Журнал сохранится. Изменения в таблицу не записывались.'):
                         return False
                     engine.cancelled.set()
+                engine.cancelled.set()
                 return True
             window.events.closing += closing
             def ui_smoke():
@@ -74,7 +75,7 @@ def main():
                             return
                 finally:
                     window.destroy()
-            webview.start(ui_smoke if args.ui_smoke else None, gui='edgechromium', debug=False, private_mode=True, icon=str(assets.parent / 'assets' / 'shoko.ico'))
+            webview.start(ui_smoke if args.ui_smoke else None, gui='edgechromium', debug=False, icon=str(assets.parent / 'assets' / 'shoko.ico'))
     finally:
         server.close()
         engine.close()

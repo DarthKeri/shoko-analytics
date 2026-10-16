@@ -45,8 +45,7 @@ def atomic_json(path, value):
 
 def defaults():
     return dict(initialized=False, prostoi='', drivers='', csv='', target_mode='local', target='',
-                credentials='', google_auth_mode='oauth', google_oauth_client='', google_backup_folder='', allowed_targets=[], developer=False, appearance='classic', telegram_mode='manual',
-                telegram_bot='', telegram_api_id='', telegram_timeout=120, last_url='', last_date='')
+                credentials='', google_auth_mode='oauth', google_oauth_client='', google_backup_folder='', allowed_targets=[], developer=False, appearance='classic', last_date='')
 
 
 def resolve_root(root):
@@ -99,8 +98,13 @@ class Store:
                 self.config.update(json.loads(self.config_path.read_text(encoding='utf-8')))
             except (ValueError, OSError) as exc:
                 raise AppError('Настройки повреждены. Сохраните файл settings.local.json и проверьте его.') from exc
+            obsolete = [k for k in self.config if k.startswith('telegram_') or k == 'last_url']
+            if obsolete:
+                for key in obsolete:
+                    self.config.pop(key)
+                atomic_json(self.config_path, self.config)
             # Older builds saved fields but never completed the all-or-nothing wizard.
-            if not self.config['initialized'] and any(self.config.get(k) for k in ('prostoi', 'drivers', 'csv', 'target', 'credentials', 'telegram_bot')):
+            if not self.config['initialized'] and any(self.config.get(k) for k in ('prostoi', 'drivers', 'csv', 'target', 'credentials')):
                 self.config['initialized'] = True
                 atomic_json(self.config_path, self.config)
 

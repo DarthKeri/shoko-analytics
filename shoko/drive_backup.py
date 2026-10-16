@@ -2,7 +2,7 @@
 import copy
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 from .adapters import google_request_error, google_http_request, google_transport_code
 from .storage import AppError, atomic_json, digest, stamp
@@ -13,6 +13,11 @@ SHEETS = 'https://sheets.googleapis.com/v4/spreadsheets/'
 SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 COPY_TIMEOUT = (45, 180)
 FILE_FIELDS = 'id,name,mimeType,parents,driveId,trashed,version,appProperties,capabilities(canCopy,canAddChildren)'
+
+
+def backup_name(source, moment=None):
+    moment = moment or datetime.now(timezone.utc)
+    return f'[Shoko_{moment.astimezone(timezone(timedelta(hours=3))):%Y-%m-%d_%H-%M-%S}] {source}'
 
 
 def folder_id(value):
@@ -135,7 +140,7 @@ class DriveBackup:
             if self.metadata(self.source)['version'] != source['version']:
                 raise AppError('Таблица изменилась перед копированием. Подготовьте обновление заново.')
             self.progress('Создаём полную копию Google-таблицы с комментариями')
-            name = f'{source["name"]} — копия {datetime.now():%Y-%m-%d %H-%M-%S}'
+            name = backup_name(source['name'])
             # Do not retry a mutating request after an unknown timeout. A retained marker
             # identifies a possible orphan for an administrator; source writes never follow.
             marker = {'shokoBackup': manifest['id'], 'shokoSource': self.source}

@@ -141,9 +141,13 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(all(v['ok'] for v in self.engine.checks.values()))
         self.assertEqual(file_hash(self.paths['target']),self.original)
 
-    def test_manual_csv_requires_explicit_link_confirmation(self):
-        with self.assertRaises(AppError): self.engine.prepare('https://garage.example.test','2026-08-20')
-        self.assertEqual(file_hash(self.paths['target']),self.original)
+    def test_manual_csv_needs_no_url_and_still_waits_for_write_approval(self):
+        for value in ('', 'not a URL'):
+            self.engine.prepare(value, '2026-08-20'); self.wait()
+            self.assertEqual(self.engine.state['phase'], 'preview', self.engine.state['error'])
+            self.assertEqual(self.engine.plan['url'], '')
+            self.assertEqual(file_hash(self.paths['target']), self.original)
+            self.assertEqual(self.engine.store.copies(), [])
 
     def test_missing_file_stops_preparation(self):
         Path(self.paths['drivers']).unlink()

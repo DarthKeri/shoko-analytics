@@ -125,8 +125,8 @@ class Server:
                 if path.exists():
                     result['changes'] = load_plan(engine.store.root, manifest['run_id'])['changes'][:100]
             return result
-        if action == 'telegram':
-            return engine.telegram_auth(body.get('step'), **body.get('values', {}))
+        if action == 'google-items':
+            return engine.google_library(body.get('kind'), body.get('query', ''), body.get('page_token', ''))
         if action == 'google-auth':
             return engine.google_auth_action(body.get('step'))
         if action == 'cancel-google':
@@ -171,7 +171,6 @@ class Server:
                     raise AppError('Нельзя хранить рабочие данные в исходном архиве.')
                 # No files are moved or deleted. Explicitly selected new folder is initialized.
                 from .storage import Store
-                from .telegram import Telegram
                 if new_root == engine.store.root:
                     return engine.public_state()
                 new_store = Store(new_root)
@@ -185,12 +184,10 @@ class Server:
                 except Exception:
                     new_lock.close()
                     raise
-                engine.telegram.close()
                 engine.store = new_store
                 if getattr(engine, 'root_lock', None):
                     engine.root_lock.close()
                 engine.root_lock = new_lock
-                engine.telegram = Telegram(engine.store)
                 from .google_auth import GoogleAuth
                 engine.google = GoogleAuth(engine.store)
                 return engine.public_state()

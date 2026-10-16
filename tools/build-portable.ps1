@@ -15,8 +15,8 @@ $buildId = [guid]::NewGuid().ToString('N')
 $sitePackages = Join-Path $projectRoot ('build\portable-dependencies-' + $buildId)
 $wheels = Join-Path $cache 'wheels'
 New-Item -ItemType Directory -Path $wheels -Force | Out-Null
-# These two pure Python packages publish source archives; build their wheels first.
-& $Python -m pip wheel --disable-pip-version-check --no-deps --wheel-dir $wheels 'pyaes==1.6.1' 'proxy_tools==0.1.0'
+# This pure Python package publishes source archives; build its wheel first.
+& $Python -m pip wheel --disable-pip-version-check --no-deps --wheel-dir $wheels 'proxy_tools==0.1.0'
 if ($LASTEXITCODE) { throw 'Pure Python dependency wheel build failed' }
 & $Python -m pip install --disable-pip-version-check --no-compile --only-binary=:all: --platform win_amd64 --python-version 3.13 --implementation cp --abi cp313 --find-links $wheels --target $sitePackages -r "$projectRoot\requirements-runtime.txt"
 if ($LASTEXITCODE) { throw 'Runtime dependency install failed' }

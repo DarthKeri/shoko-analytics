@@ -117,9 +117,9 @@ class OAuthCallback(HTTPServer):
 
 
 class SavedSession(AuthorizedSession):
-    def __init__(self, credentials, owner, saved):
+    def __init__(self, credentials, owner, saved, path=''):
         super().__init__(credentials, refresh_timeout=45)
-        self.owner, self.saved = owner, saved
+        self.owner, self.saved, self.path = owner, saved, path
 
     def request(self, *args, **kwargs):
         previous = self.credentials.to_json()
@@ -127,8 +127,14 @@ class SavedSession(AuthorizedSession):
             return super().request(*args, **kwargs)
         finally:
             if self.credentials.to_json() != previous:
-                self.saved['credentials'] = json.loads(self.credentials.to_json())
-                self.owner.save(self.saved)
+                with self.owner.lock:
+                    try:
+                        latest = self.owner.load(self.path)
+                    except AppError:
+                        latest = None  # Never restore a disconnected or replaced login.
+                    if latest and all(latest.get(k) == self.saved.get(k) for k in ('email', 'client_fingerprint')):
+                        latest['credentials'] = json.loads(self.credentials.to_json())
+                        self.owner.save(latest)
 
 
 class GoogleAuth:
@@ -189,7 +195,7 @@ class GoogleAuth:
                 return dict(self._status_value)
             try:
                 saved = self.load(path)
-                result = {'connected': True, 'email': saved['email'], 'message': 'Вход сохранён'}
+                result = {'connected': True, 'email': saved['email'], 'name': saved.get('name', ''), 'avatar': saved.get('avatar', ''), 'profile_loaded': bool(saved.get('profile_loaded')), 'message': 'Вход сохранён'}
             except AppError as exc:
                 result = {'connected': False, 'email': '', 'message': str(exc)}
             try:
@@ -211,7 +217,26 @@ class GoogleAuth:
             credentials = Credentials.from_authorized_user_info(saved['credentials'], scopes=SCOPES)
         except Exception:
             raise AppError('Не удалось прочитать сохранённый вход Google. Войдите заново.') from None
-        return SavedSession(credentials, self, saved)
+        return SavedSession(credentials, self, saved, config.get('google_oauth_client', ''))
+
+    def refresh_profile(self, config):
+        from .google_library import avatar_data
+        from .adapters import google_http_request, google_request_error
+        with self.session(config) as session:
+            try:
+                response = google_http_request(session, 'GET', 'https://www.googleapis.com/drive/v3/about', params={'fields': 'user(emailAddress,displayName,photoLink)'}, timeout=(10, 45))
+            except Exception as exc:
+                raise AppError(google_request_error(exc)) from None
+            if response.status_code >= 400:
+                raise AppError(http_error(response))
+            user = response.json().get('user', {})
+            avatar = avatar_data(user.get('photoLink'))
+            with self.lock:
+                saved = self.load(config.get('google_oauth_client', ''))
+                if user.get('emailAddress') != saved['email']:
+                    raise AppError('Google-аккаунт изменился. Повторите подключение.')
+                self.save(dict(saved, name=user.get('displayName', ''), avatar=avatar, profile_loaded=True))
+        return self.status(config)
 
     def identity(self, config):
         saved = self.load(config.get('google_oauth_client', ''))
@@ -262,10 +287,11 @@ class GoogleAuth:
                 if not credentials.refresh_token or not set(SCOPES).issubset(granted):
                     raise AppError('Google не выдал полный доступ для повторных запусков. Повторите вход и разрешите Drive и таблицы.')
                 with AuthorizedSession(credentials, refresh_timeout=45) as session:
-                    response = session.get('https://www.googleapis.com/drive/v3/about', params={'fields': 'user(emailAddress)'}, timeout=(10, 45))
+                    response = session.get('https://www.googleapis.com/drive/v3/about', params={'fields': 'user(emailAddress,displayName,photoLink)'}, timeout=(10, 45))
                     if response.status_code >= 400:
                         raise AppError(http_error(response))
-                    email = response.json().get('user', {}).get('emailAddress', '')
+                    user = response.json().get('user', {})
+                    email = user.get('emailAddress', '')
                 if not email:
                     raise AppError('Google не вернул аккаунт пользователя. Подключение не сохранено; повторите вход.')
                 if cancelled.is_set():
@@ -274,7 +300,8 @@ class GoogleAuth:
                     raise AppError('OAuth-файл изменился во время входа. Повторите подключение.')
                 info = json.loads(credentials.to_json())
                 info['scopes'] = list(granted)
-                self.save({'credentials': info, 'email': email, 'client_fingerprint': fingerprint})
+                from .google_library import avatar_data
+                self.save({'credentials': info, 'email': email, 'client_fingerprint': fingerprint, 'name': user.get('displayName', ''), 'avatar': avatar_data(user.get('photoLink')), 'profile_loaded': True})
                 return {'connected': True, 'email': email}
             except AppError:
                 raise

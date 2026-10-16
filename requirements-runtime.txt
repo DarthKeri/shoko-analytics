@@ -1,6 +1,5 @@
 openpyxl==3.1.5
 pywebview==6.2.1
-Telethon==1.45.0
 google-auth==2.62.0
 google-auth-oauthlib==1.5.0
 requests==2.34.2
@@ -18,7 +17,6 @@ idna==3.20
 oauthlib==4.0.0
 packaging==26.3
 proxy_tools==0.1.0
-pyaes==1.6.1
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==3.11

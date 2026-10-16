@@ -6,19 +6,17 @@ import threading
 import uuid
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import urlparse
 from .storage import AppError, Store, atomic_json, digest, file_hash, stamp
 from .adapters import readable, read_excel, read_driver_excel, read_csv, target, guard_target, target_key, changes_for, normalize_merged_output, PROTECTED_ARCHIVE
 from .calculation import assemble_prostoi, calculate, PROSTOI, DRIVERS, TARGET, GARAGE
-from .telegram import Telegram
 from .drive_backup import DriveBackup
 from .google_auth import GoogleAuth, client_config
 from .plans import save_plan, load_plan
 from .garage import prepare_garage, comparison_before, formula_text
 from .validation import read_prostoi_source, read_bot_source, check_bot_source
 
-STEPS = ['Проверка файлов и доступа', 'Чтение исходных данных', 'Получение CSV', 'Подготовка изменений']
-CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'google_auth_mode', 'google_oauth_client', 'developer', 'appearance', 'telegram_mode', 'telegram_bot', 'telegram_timeout', 'last_url', 'last_date'}
+STEPS = ['Проверка файлов и доступа', 'Чтение исходных данных', 'Проверка CSV', 'Подготовка изменений']
+CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'google_auth_mode', 'google_oauth_client', 'developer', 'appearance', 'last_date'}
 
 
 def resolved(value, processing_date):
@@ -31,7 +29,6 @@ def resolved(value, processing_date):
 class Engine:
     def __init__(self, root):
         self.store = Store(root)
-        self.telegram = Telegram(self.store)
         self.google = GoogleAuth(self.store)
         self.lock = threading.RLock()
         self.cancelled = threading.Event()
@@ -60,16 +57,12 @@ class Engine:
                 raise AppError('Дождитесь завершения операции перед изменением настроек.')
             previous = self.config()
             candidate = dict(previous, **{k: v for k, v in values.items() if k in CONFIG_KEYS})
-            if candidate['target_mode'] not in ('local', 'google') or candidate['telegram_mode'] not in ('manual', 'auto'):
+            if candidate['target_mode'] not in ('local', 'google'):
                 raise AppError('Неверный тип подключения.')
             if candidate['google_auth_mode'] not in ('oauth', 'service_account'):
                 raise AppError('Неверный способ входа Google.')
             if candidate['appearance'] not in ('classic', 'apple'):
                 raise AppError('Неизвестный вид интерфейса. Выберите Стандартный или Apple HIG.')
-            try:
-                candidate['telegram_timeout'] = max(15, min(150, int(candidate['telegram_timeout'])))
-            except (TypeError, ValueError):
-                raise AppError('Время ожидания бота должно быть числом.') from None
             if 'test_copy_confirmed' in values:
                 candidate['allowed_targets'] = [target_key(candidate)] if values['test_copy_confirmed'] and candidate['target'] else []
             # Saving incomplete first-run settings is allowed. Writes require guard_target.
@@ -83,7 +76,7 @@ class Engine:
             self.state.update(phase='idle', plan_id='', error='')
             dependencies = {'prostoi': ('prostoi', 'last_date'), 'drivers': ('drivers', 'last_date'),
                             'target': ('target', 'target_mode', 'credentials', 'allowed_targets'),
-                            'credentials': ('credentials',), 'csv': ('csv', 'telegram_mode', 'telegram_bot', 'telegram_timeout')}
+                            'credentials': ('credentials',), 'csv': ('csv',)}
             dependencies['csv'] += ('target', 'target_mode', 'credentials', 'allowed_targets', 'google_auth_mode', 'google_oauth_client')
             dependencies['backup'] = ('google_backup_folder', 'target', 'credentials', 'target_mode', 'allowed_targets')
             for key in ('credentials', 'target', 'backup'):
@@ -143,6 +136,8 @@ class Engine:
 
     def set_phase(self, **values):
         with self.lock:
+            if 'step' in values and values['step'] != self.state.get('step'):
+                values.setdefault('detail', '')
             self.state.update(values)
 
     def launch(self, operation, function):
@@ -150,7 +145,7 @@ class Engine:
             if self.busy():
                 raise AppError('Уже выполняется операция. Дождитесь её завершения.')
             self.cancelled.clear()
-            phase = {'prepare': 'preparing', 'write': 'writing', 'check': 'checking', 'telegram': 'connecting', 'google': 'connecting'}[operation]
+            phase = {'prepare': 'preparing', 'write': 'writing', 'check': 'checking', 'google': 'connecting'}[operation]
             self.state.update(phase=phase, operation=operation, started=stamp(), error='', step=-1, detail='', current_source='')
             def work():
                 try:
@@ -214,9 +209,6 @@ class Engine:
                 raise AppError('Для локального Excel копия создаётся в рабочей папке приложения.')
             DriveBackup(target(config, self.google), config).check()
         elif name == 'csv':
-            if config['telegram_mode'] == 'auto':
-                self.telegram.call(self.telegram.check(config['telegram_bot']))
-                return 'Telegram и бот доступны. CSV будет проверен после получения при подготовке; сообщение боту не отправлялось.'
             # Validate the local export before opening any Google connection.
             rows = read_bot_source(config['csv'])
             return check_bot_source(config['csv'], target(config, self.google), rows)
@@ -256,23 +248,19 @@ class Engine:
             if config['google_auth_mode'] == 'service_account':
                 required += [('credentials', 'Ключ Google')]
             required += [('google_backup_folder', 'Папка копий Google Drive')]
-        required += [('telegram_bot', 'Бот Telegram')] if config['telegram_mode'] == 'auto' else [('csv', 'CSV из бота')]
+        required += [('csv', 'CSV Гаража')]
         missing = [label for key, label in required if not config[key].strip()]
         if missing:
             raise AppError('Заполните настройки: ' + ', '.join(missing) + '. Обновление не запущено.')
         if config['target_mode'] == 'google' and config['google_auth_mode'] == 'oauth':
             client_config(config.get('google_oauth_client', ''))
-        parsed = urlparse(url)
-        if parsed.scheme not in ('https', 'http') or not parsed.netloc or parsed.username or parsed.password:
-            raise AppError('Вставьте корректную ссылку на Гараж.')
-        if config['telegram_mode'] == 'manual' and not csv_confirmed:
-            raise AppError('Подтвердите, что выбранный CSV получен для этой ссылки. Это связывает файл с текущим запросом.')
+        url = ''
         guard_target(config)
         with self.lock:
             if self.busy():
                 raise AppError('Дождитесь завершения операции.')
             latest = self.config()
-            latest.update(last_url=url, last_date=processing_date)
+            latest.update(last_date=processing_date)
             if latest != self.config():
                 self.store.save_config(latest)
         def work():
@@ -291,8 +279,6 @@ class Engine:
             drivers = read_driver_excel(config['drivers'], processing - timedelta(days=1))
             self.check_cancel()
             self.set_phase(step=2)
-            if config['telegram_mode'] == 'auto':
-                config['csv'] = self.telegram.call(self.telegram.download(config, url, identity, self.cancelled))
             csv_path = readable(config['csv'], {'.csv'})
             source_hashes['csv'] = file_hash(csv_path)
             garage = read_bot_source(csv_path)
@@ -420,17 +406,13 @@ class Engine:
                 raise AppError('Не удалось проверить созданную копию.')
             return {'path': str(path)}
 
-    def telegram_auth(self, step, **values):
-        def work():
-            if step == 'code':
-                result = self.telegram.call(self.telegram.send_code(values.get('api_id', ''), values.get('api_hash', ''), values.get('phone', '')))
-            elif step == 'sign_in':
-                result = self.telegram.call(self.telegram.sign_in(values.get('code', ''), values.get('password', '')))
-            else:
-                raise AppError('Неизвестный шаг подключения Telegram.')
-            self.set_phase(phase='idle', telegram_auth=result)
-            self.store.log('INFO', 'Шаг подключения Telegram завершён. Секреты в журнал не записаны.')
-        return self.launch('telegram', work)
+    def google_library(self, kind, query='', page_token=''):
+        from .google_library import list_items
+        with self.lock:
+            if self.busy():
+                raise AppError('Дождитесь завершения текущей операции.')
+            config = self.config()
+        return list_items(self.google, config, kind, query, page_token)
 
     def google_auth_action(self, step):
         with self.lock:
@@ -439,18 +421,23 @@ class Engine:
             config = self.config()
             if config['google_auth_mode'] != 'oauth':
                 raise AppError('Выберите способ входа «Мой Google-аккаунт» в настройках.')
-            if step not in ('connect', 'disconnect'):
+            if step not in ('connect', 'disconnect', 'profile'):
                 raise AppError('Неизвестное действие входа Google.')
             if step == 'connect':
                 client_config(config.get('google_oauth_client', ''))
             self.plan = None
             self.checks = {k: v for k, v in self.checks.items() if k not in ('target', 'credentials', 'backup', 'csv')}
-            self.state.update(plan_id='', error='')
+            self.state.update(plan_id='', error='', auth_step=step)
             if step == 'disconnect':
                 self.google.disconnect()
                 self.set_phase(phase='idle', detail='Вход Google удалён с этого компьютера.')
                 self.store.log('INFO', 'Сохранённый вход Google удалён с этого компьютера.')
                 return {'disconnected': True}
+            if step == 'profile':
+                def refresh_profile():
+                    self.google.refresh_profile(config)
+                    self.set_phase(phase='idle', error='', detail='Аккаунт Google обновлён.')
+                return self.launch('google', refresh_profile)
             def work():
                 self.google.connect(config['google_oauth_client'], self.cancelled, lambda text: self.set_phase(detail=text))
                 self.set_phase(phase='idle', error='', detail='Google-аккаунт подключён.')
@@ -468,6 +455,5 @@ class Engine:
         self.cancelled.set()
         if self.worker:
             self.worker.join(timeout=50)
-        self.telegram.close()
         if getattr(self, 'root_lock', None):
             self.root_lock.close()

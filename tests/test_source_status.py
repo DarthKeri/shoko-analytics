@@ -175,30 +175,6 @@ class SourceStatusTests(unittest.TestCase):
         self.assertEqual(request.call_args.args, ('GET', '/values:batchGet'))
         self.assertEqual(request.call_args.kwargs['params']['ranges'], "'Гараж 25.08.2026'!A:BC")
 
-    def test_automatic_telegram_status_never_downloads_or_checks_stale_manual_file(self):
-        self.engine.save_settings({'telegram_mode': 'auto', 'telegram_bot': '@fixture_bot'})
-        Path(self.paths['csv']).unlink()
-        with patch.object(self.engine.telegram, 'check', new=Mock(return_value='fake-check-task')), patch.object(self.engine.telegram, 'call'), patch.object(self.engine.telegram, 'download') as download:
-            result = self.check('csv')
-            download.assert_not_called()
-        self.assertTrue(result['ok'])
-        self.assertIn('CSV будет проверен после получения', result['message'])
-
-    def test_downloaded_invalid_csv_is_rejected_without_using_old_manual_export(self):
-        bad=Path(self.temp.name)/'downloaded-invalid.csv'
-        bad.write_text('model;price\nPolo;1000\n',encoding='utf-8')
-        self.engine.save_settings({'telegram_mode':'auto','telegram_bot':'@fixture_bot'})
-        with patch.object(self.engine.telegram,'download',new=Mock(return_value='download-task')), \
-             patch.object(self.engine.telegram,'call',return_value=str(bad)), \
-             patch.object(LocalTarget,'snapshot') as snapshot:
-            self.engine.prepare('https://garage.example.test/fleet/1','2026-08-20')
-            if self.engine.worker:self.engine.worker.join(15)
-            snapshot.assert_not_called()
-        self.assertIn('downloaded-invalid.csv',self.engine.state['error'])
-        self.assertIn('нет колонок',self.engine.state['error'])
-        self.assertIsNone(self.engine.plan)
-        self.assertEqual(self.engine.store.copies(),[])
-
     def test_target_change_invalidates_csv_match_status(self):
         self.assertTrue(self.check('csv')['ok'])
         self.engine.save_settings({'target': '', 'test_copy_confirmed': False})
