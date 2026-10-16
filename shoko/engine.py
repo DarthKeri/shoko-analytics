@@ -70,6 +70,31 @@ class Engine:
     def busy(self):
         return self.state['phase'] in ('preparing', 'writing', 'checking', 'connecting')
 
+    def reset_settings(self, confirmed=False):
+        with self.lock:
+            if confirmed is not True:
+                raise AppError('Подтвердите удаление всех настроек.')
+            if self.busy() or (self.worker and self.worker.is_alive()):
+                raise AppError('Дождитесь завершения текущей операции перед удалением настроек.')
+            # Invalidate approval even if filesystem permissions prevent a complete reset.
+            self.plan = None
+            self.checks = {}
+            self.developer_results = {}
+            self.state = dict(phase='idle', step=-1, started='', error='', plan_id='', operation='')
+            try:
+                self.google.disconnect()
+            except OSError:
+                raise AppError('Не удалось удалить сохранённый вход Google. Проверьте доступ к рабочей папке и повторите сброс. Настройки не удалены.') from None
+            try:
+                self.store.reset_config()
+            except OSError:
+                raise AppError('Вход Google отключён, но не удалось сбросить настройки. Проверьте доступ к settings.local.json и повторите сброс.') from None
+            try:
+                self.store.log('INFO', 'Все настройки сброшены, сохранённый вход Google удалён. Таблицы, резервные копии и журналы сохранены.')
+            except OSError:
+                pass  # A read-only journal must not disguise a completed reset as a failure.
+            return self.public_state()
+
     def save_settings(self, values):
         with self.lock:
             if self.busy():

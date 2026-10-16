@@ -107,6 +107,8 @@ class Server:
             return engine.developer_action(body.get('kind'))
         if action == 'settings':
             return engine.save_settings(body.get('values', {}))
+        if action == 'reset-settings':
+            return engine.reset_settings(body.get('confirmed'))
         if action == 'finish-setup':
             return engine.finish_setup()
         if action == 'check':

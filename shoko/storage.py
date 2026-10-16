@@ -141,6 +141,12 @@ class Store:
             atomic_json(self.config_path, candidate)
             self.config = candidate
 
+    def reset_config(self):
+        with self.mutex:
+            candidate = defaults()
+            atomic_json(self.config_path, candidate)
+            self.config = candidate
+
     def log(self, level, message):
         # Only sanitized, user-facing messages are passed here. No credential payloads.
         line = f'[{stamp()}] [{level}] {message}\n'

@@ -72,7 +72,7 @@ export default function App(){
       {route.page==='preview'&&!data.plan&&<section className="sd-page"><h2>План недоступен</h2><Button onClick={()=>navigate('update')}>Вернуться к обновлению</Button></section>}
       {route.page==='progress'&&<section className="sd-page"><h2>{writing?'Обновление данных':phase==='done'?'Обновление завершено':'Результат обновления'}</h2>{writing?progress(writeSteps):<>{phase==='done'?<p>✓ Записанные значения проверены. Копия сохранена.</p>:<Errors text={data.state.error||'Проверьте журнал операции во вкладке разработчика'}/>}<div className="sd-footer"><div className="sd-actions"><Button onClick={()=>navigate('update')}>Вернуться к обновлению</Button><Button onClick={()=>navigate('copies')}>Открыть копии</Button></div></div></>}</section>}
       {route.page==='copies'&&<Copies data={data} busy={busy} call={call} openCopy={openCopy} error={uiError} onError={setUiError}/>}
-      {route.page==='settings'&&<Settings onPreviewAppearance={setPreviewAppearance} data={data} refresh={refresh} onRestart={()=>setWizard(true)}/>}
+      {route.page==='settings'&&<Settings onPreviewAppearance={setPreviewAppearance} data={data} refresh={refresh} onRestart={()=>setWizard(true)} onReset={saved=>{setData(saved);setPreviewAppearance(null);setChartPreference(null);setUiError('');setDate(today());setModal(null);lastPhase.current='idle';const next={page:'update',tab:'start'};routes.current=[next];routeIndex.current=0;setRoute(next);setWizard(true)}}/>}
       {route.page==='developer'&&data.config.developer&&<Developer data={data} busy={busy} call={call} error={uiError} onError={setUiError}/>}
     </>}
   </main></div>

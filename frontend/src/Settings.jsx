@@ -1,15 +1,16 @@
 import React,{useEffect,useState,useRef} from 'react';
 import {action} from './api.js';
-import {Button,FileField,Errors,Activity,Spinner,Tabs,timeText} from './components.jsx';
+import {Button,FileField,Errors,Activity,Spinner,Tabs,Modal,timeText} from './components.jsx';
 import GoogleConnection from './GoogleConnection.jsx';
 import DrivePicker from './DrivePicker.jsx';
 
 const today=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'});
 
-export default function Settings({data,refresh,wizard=false,onFinish,onRestart,onPreviewAppearance}){
+export default function Settings({data,refresh,wizard=false,onFinish,onRestart,onReset,onPreviewAppearance}){
   const [form,setForm]=useState(()=>({...data.config})),[confirmed,setConfirmed]=useState(Boolean(data.target_allowed));
   const [error,setError]=useState(''),[message,setMessage]=useState(''),[step,setStep]=useState(0);
   const [root,setRoot]=useState(data.root),[pending,setPending]=useState(false),[checking,setChecking]=useState('');
+  const [resetOpen,setResetOpen]=useState(false);
   const pageRef=useRef(null);
   const [tab,setTab]=useState(data.state.operation==='google'?'google':'files');
   useEffect(()=>{pageRef.current?.closest('main')?.scrollTo({top:0})},[tab,step]);
@@ -45,6 +46,14 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
     if(await request('finish-setup'))onFinish(saved);
   }
   async function next(){if(step===2){await closeSetup();return}if(await save())setStep(s=>s+1)}
+  async function resetSettings(){
+    setError('');setPending(true);
+    try{
+      const saved=await action('reset-settings',{confirmed:true});
+      setForm(saved.config);setConfirmed(false);setResetOpen(false);
+      if(onReset)onReset(saved);else await refresh();
+    }catch(e){setResetOpen(false);setError(e.message);await refresh().catch(()=>{})}finally{setPending(false)}
+  }
   async function createCopy(){
     setError('');setPending(true);
     try{
@@ -107,7 +116,9 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
       </details>}
     </div>}
     {!wizard&&tab==='general'&&<div className="settings-group"><h3>Дополнительно</h3><label className="sd-switch"><input type="checkbox" checked={form.developer} disabled={busy} onChange={e=>set('developer',e.target.checked)}/>Показывать вкладку разработчика</label>
-      <Button disabled={busy} onClick={async()=>{if(await save())onRestart()}}>Повторить первичную настройку</Button></div>}
+      <Button disabled={busy} onClick={async()=>{if(await save())onRestart()}}>Повторить первичную настройку</Button>
+      <Button disabled={busy} onClick={()=>setResetOpen(true)}>Удалить все настройки</Button></div>}
+    {resetOpen&&<Modal title="Удалить все настройки?" onClose={()=>{if(!pending)setResetOpen(false)}} actions={<><Button disabled={busy} onClick={()=>setResetOpen(false)}>Отмена</Button><Button primary disabled={busy} onClick={resetSettings}>{pending?'Удаление…':'Удалить все настройки'}</Button></>}><p>Будут удалены пути к файлам, выбранная таблица, папка резервных копий, сохранённый вход Google и настройки интерфейса.</p><p>Потребуется повторная настройка. Рабочая папка, таблицы, резервные копии и журналы сохранятся.</p></Modal>}
     {(error||data.state.error)&&<Errors text={error||data.state.error}/>}
     <div className="sd-footer settings-footer"><span role="status" className="settings-feedback">{message}</span><div className="sd-actions">{wizard?<>
       {step>0&&<Button disabled={busy} onClick={()=>setStep(s=>s-1)}>Назад</Button>}
