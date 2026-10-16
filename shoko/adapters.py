@@ -14,12 +14,12 @@ from openpyxl.utils import get_column_letter
 from .calculation import PROSTOI, DRIVERS, TARGET, GARAGE, driver_counts, cell
 from .storage import AppError, digest, file_hash
 from .garage import managed_names, comparison_before, formula_text, latest_garage
+from .google_batches import MAX_GOOGLE_WRITE_BYTES, GOOGLE_WRITE_INTERVAL, prepare_batches, write_batches
 
 SHEETS = [PROSTOI, DRIVERS, TARGET, GARAGE]
 LIVE_ID = '1HzoNqo_7x1RE_4ADegdW46r7qKhUl9xrKi6j1DXEiTQ'
 PROTECTED_ARCHIVE = Path(r'C:\Users\krivov\Desktop\shoko\ScriptExcel')
 MAX_CELLS = 2_000_000
-MAX_GOOGLE_WRITE_BYTES = 12_000_000
 GOOGLE_WRITE_TIMEOUT = (45, 180)
 
 
@@ -620,17 +620,20 @@ class GoogleTarget:
                     request = {'updateCells': {'start': {'sheetId': sheet_ids[name], 'rowIndex': row - 1, 'columnIndex': group[0]['col'] - 1}, 'rows': [values], 'fields': 'userEnteredValue'}}
                     requests.append(request)
                     blocks[key] = {'end': row, 'request': request}
-        body = {'requests': requests, 'includeSpreadsheetInResponse': False}
-        payload = json.dumps(body, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode('utf-8')
-        if len(payload) > MAX_GOOGLE_WRITE_BYTES:
-            raise AppError(f'Объём изменений {len(payload) / 1_000_000:.2f} МБ превышает предел одной атомарной записи (12 МБ). Запись не начата; уменьшите набор данных.')
-        return payload if requests else None
+        return prepare_batches(requests)
 
     def write(self, plan, prepared=None):
-        payload = prepared if prepared is not None else self.prepare_write(plan)
-        if payload:
-            # Same atomic batch and exact reviewed cells. Gzip reduces network
-            # upload volume; this is not a second request or a partial write.
+        parts = write_batches(prepared if prepared is not None else self.prepare_write(plan))
+        report = getattr(self, 'report', lambda text: None)
+        progress = getattr(self, 'write_progress_callback', lambda state: None)
+        self.write_progress = {'total': len(parts), 'confirmed': 0, 'in_flight': None}
+        progress(dict(self.write_progress))
+        if not parts:
+            return
+        report(f'Записываем {len(plan["changes"])} подтверждённых изменений, частей: {len(parts)}. '
+               'Полная резервная копия проверена. BF-копии создаются перед изменением действующих листов.')
+        last_started = None
+        for number, payload in enumerate(parts, 1):
             headers = {'Content-Type': 'application/json; charset=utf-8'}
             body = payload
             if len(payload) >= 64_000:
@@ -638,11 +641,27 @@ class GoogleTarget:
                 if len(compressed) < len(payload):
                     body = compressed
                     headers['Content-Encoding'] = 'gzip'
-            report = getattr(self, 'report', lambda text: None)
-            report(f'Отправляем {len(plan["changes"])} подтверждённых изменений: '
-                   f'{len(body) / 1_000_000:.2f} МБ по сети из {len(payload) / 1_000_000:.2f} МБ JSON. '
-                   'Ожидание ответа Google — до 180 секунд.')
-            self.request('POST', ':batchUpdate', data=body, headers=headers, timeout=GOOGLE_WRITE_TIMEOUT)
+            # Pace starts below the per-user write quota, with room for backups.
+            if last_started is not None:
+                delay = GOOGLE_WRITE_INTERVAL - (time.monotonic() - last_started)
+                if delay > 0:
+                    time.sleep(delay)
+            self.write_progress['in_flight'] = number
+            progress(dict(self.write_progress))  # Durable intent before sending.
+            report(f'Часть {number}/{len(parts)}: {len(body) / 1_000_000:.2f} МБ по сети '
+                   f'из {len(payload) / 1_000_000:.2f} МБ JSON. Ожидание Google — до 180 секунд.')
+            last_started = time.monotonic()
+            try:
+                self.request('POST', ':batchUpdate', data=body, headers=headers, timeout=GOOGLE_WRITE_TIMEOUT)
+            except Exception as exc:
+                reason = str(exc) if isinstance(exc, AppError) else 'Ответ Google не получен.'
+                raise AppError(f'Запись остановлена на части {number}/{len(parts)}. '
+                               f'Google подтвердил {number - 1} из {len(parts)} частей; '
+                               f'результат части {number} не подтверждён. Следующие части не отправлены. '
+                               f'{reason} Автоматический повтор не выполняется.') from None
+            self.write_progress.update(confirmed=number, in_flight=None)
+            progress(dict(self.write_progress))
+            report(f'Google подтвердил часть {number}/{len(parts)}.')
 
     def verify(self, plan):
         if plan.get('sheet_backups'):

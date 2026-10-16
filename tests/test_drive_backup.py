@@ -273,6 +273,59 @@ class GoogleWriteGateTests(unittest.TestCase):
         self.adapter.prepare_write.assert_not_called()
         self.assertEqual(self.engine.store.copies(), [])
 
+    def test_partial_progress_is_durable_and_not_replayed_after_restart(self):
+        def fail_after_first_part(plan, prepared=None):
+            self.adapter.write_progress_callback({'total': 3, 'confirmed': 0, 'in_flight': 1})
+            self.adapter.write_progress_callback({'total': 3, 'confirmed': 1, 'in_flight': None})
+            self.adapter.write_progress_callback({'total': 3, 'confirmed': 1, 'in_flight': 2})
+            raise AppError('Google подтвердил 1 из 3 частей; результат части 2 неизвестен.')
+        self.adapter.write.side_effect = fail_after_first_part
+        self.write()
+        self.assertEqual(self.engine.state['phase'], 'error')
+        result = self.engine.public_state()['history'][0]
+        self.assertEqual(result['write_progress'], {'total': 3, 'confirmed': 1, 'in_flight': 2})
+        self.assertEqual(result['status'], 'uncertain')
+        self.assertEqual(self.engine.store.copies()[0]['status'], 'verified')
+        self.adapter.verify.assert_not_called()
+        self.engine.close()
+        self.engine = Engine(self.temp.name)
+        self.assertEqual(self.engine.public_state()['history'][0]['write_progress'], result['write_progress'])
+        self.adapter.write.assert_called_once()
+
+    def test_interrupted_result_preserves_last_confirmed_part(self):
+        atomic_json(self.engine.store.root / 'plans' / 'interrupted.result.json', {
+            'id': 'interrupted', 'created': '2026-10-16T00:00:00+00:00', 'status': 'writing',
+            'write_progress': {'total': 4, 'confirmed': 2, 'in_flight': 3}})
+        self.engine.close()
+        self.engine = Engine(self.temp.name)
+        result = next(r for r in self.engine.public_state()['history'] if r['id'] == 'interrupted')
+        self.assertEqual(result['status'], 'interrupted')
+        self.assertIn('Google подтвердил 2 из 4 частей', result['message'])
+        self.assertEqual(result['write_progress']['in_flight'], 3)
+        self.adapter.write.assert_not_called()
+
+    def test_changed_batch_summary_blocks_before_backup(self):
+        from shoko.plans import save_plan
+        self.plan.pop('checksum')
+        self.plan['google_write'] = {'parts': 2, 'bytes': 100}
+        self.plan['checksum'] = digest(self.plan)
+        save_plan(self.engine.store.root, self.plan)
+        self.write()
+        self.assertIn('Разбиение записи изменилось', self.engine.state['error'])
+        self.assertEqual(self.engine.store.copies(), [])
+        self.adapter.write.assert_not_called()
+
+    def test_all_parts_confirmed_is_not_success_until_full_verification(self):
+        def complete_parts(plan, prepared=None):
+            self.adapter.write_progress_callback({'total': 3, 'confirmed': 3, 'in_flight': None})
+        self.adapter.write.side_effect = complete_parts
+        self.adapter.verify.side_effect = AppError('Ошибка сверки Google: тестовая ячейка.')
+        self.write()
+        result = self.engine.public_state()['history'][0]
+        self.assertEqual(result['status'], 'uncertain')
+        self.assertEqual(result['write_progress']['confirmed'], 3)
+        self.assertEqual(self.engine.state['phase'], 'error')
+
     def test_all_status_checks_include_cloud_folder_but_never_copy(self):
         with patch.object(self.engine, 'check_one') as check:
             self.engine.check('all', '2026-10-14')

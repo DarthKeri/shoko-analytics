@@ -50,22 +50,31 @@ class GooglePlanWriteTests(unittest.TestCase):
         self.assertEqual(len(json.loads(payload)['requests']), 4)
         self.assertEqual(plan, original)
 
-    def test_realistic_176786_changes_fit_in_one_atomic_request(self):
+    def test_realistic_176786_changes_are_sent_once_in_bounded_parts(self):
+        from shoko.google_batches import write_batches
         changes = [{'sheet': TARGET, 'row': n // 345 + 1, 'col': n % 345 + 1,
                     'after': '' if n % 3 == 0 else 'Абакан' if n % 3 == 1 else n}
                    for n in range(176786)]
-        payload = self.adapter.prepare_write(plan_for(changes))
-        self.assertLess(len(payload), MAX_GOOGLE_WRITE_BYTES)
-        self.assertEqual(len(cells_from(payload)), 176786)
-        with patch.object(self.adapter, 'request') as request:
-            self.adapter.write(plan_for(changes), prepared=payload)
-        request.assert_called_once()
-        call = request.call_args
-        self.assertEqual(call.args, ('POST', ':batchUpdate'))
-        self.assertEqual(call.kwargs['timeout'], (45, 180))
-        self.assertEqual(call.kwargs['headers'], {'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip'})
-        self.assertEqual(gzip.decompress(call.kwargs['data']), payload)
-        self.assertLess(len(call.kwargs['data']), len(payload) // 4)
+        plan = plan_for(changes)
+        prepared = self.adapter.prepare_write(plan)
+        parts = write_batches(prepared)
+        self.assertGreater(len(parts), 1)
+        cells = {}
+        for part in parts:
+            self.assertLessEqual(len(part), MAX_GOOGLE_WRITE_BYTES)
+            current = cells_from(part)
+            self.assertFalse(cells.keys() & current.keys())
+            cells.update(current)
+        self.assertEqual(len(cells), 176786)
+        with patch.object(self.adapter, 'request') as request, patch('shoko.adapters.time.sleep'):
+            self.adapter.write(plan, prepared=prepared)
+        self.assertEqual(request.call_count, len(parts))
+        for call, payload in zip(request.call_args_list, parts):
+            self.assertEqual(call.args, ('POST', ':batchUpdate'))
+            self.assertEqual(call.kwargs['timeout'], (45, 180))
+            self.assertEqual(call.kwargs['headers'], {'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip'})
+            self.assertEqual(gzip.decompress(call.kwargs['data']), payload)
+            self.assertLess(len(call.kwargs['data']), len(payload) // 4)
 
     def test_small_batch_remains_plain_json_and_keeps_raw_text(self):
         plan = plan_for([{'sheet': TARGET, 'row': 1, 'col': 1, 'after': '=literal'}])

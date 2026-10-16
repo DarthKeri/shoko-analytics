@@ -12,6 +12,7 @@ from .calculation import assemble_prostoi, calculate, PROSTOI, DRIVERS, TARGET, 
 from .drive_backup import DriveBackup
 from .google_auth import GoogleAuth, client_config
 from .plans import save_plan, load_plan
+from .google_batches import batch_summary
 from .sheet_backups import planned_backups
 from .garage import prepare_garage, comparison_before, formula_text
 from .validation import read_prostoi_source, read_bot_source, check_bot_source
@@ -50,7 +51,11 @@ class Engine:
             data = json.loads(path.read_text(encoding='utf-8'))
             if data.get('status') == 'writing':
                 data['status'] = 'interrupted'
-                data['message'] = 'Приложение закрыто во время записи. Проверьте цель и резервную копию.'
+                progress = data.get('write_progress', {})
+                confirmed = progress.get('confirmed', 0)
+                total = progress.get('total', 0)
+                detail = f' Google подтвердил {confirmed} из {total} частей. Остальные части требуют проверки.' if total else ''
+                data['message'] = 'Приложение закрыто во время записи.' + detail + ' Проверьте цель и резервную копию; автоматическое продолжение не выполняется.'
                 atomic_json(path, data)
 
     def config(self):
@@ -152,6 +157,7 @@ class Engine:
                 plan['operations'] = self.plan.get('operations', [])
                 plan['garage'] = self.plan.get('garage')
                 plan['sheet_backups'] = self.plan.get('sheet_backups', [])
+                plan['google_write'] = self.plan.get('google_write')
             try:
                 target_allowed = target_key(self.config()) in self.config()['allowed_targets']
             except AppError:
@@ -350,7 +356,9 @@ class Engine:
             plan['sheet_backups'] = planned_backups(before, changes, garage_plan['operations'], derived=garage_plan.get('derived', []))
             if config['target_mode'] == 'google' and config['google_auth_mode'] == 'oauth':
                 plan['google_identity'] = self.google.identity(config)
-            adapter.prepare_write(plan)  # Validate size before preview, approval or backup.
+            prepared = adapter.prepare_write(plan)  # Validate all parts before approval or backup.
+            if before['mode'] == 'google':
+                plan['google_write'] = batch_summary(prepared)
             plan['checksum'] = digest(plan)
             saved_path = save_plan(self.store.root, plan)
             self.check_cancel()
@@ -397,6 +405,8 @@ class Engine:
             if current['fingerprint'] != approved['before']['fingerprint']:
                 raise AppError('Целевая таблица изменилась после просмотра. Подготовьте новый план.')
             prepared = adapter.prepare_write(approved)  # Never create a backup for an unsendable plan.
+            if approved.get('google_write') and batch_summary(prepared) != approved['google_write']:
+                raise AppError('Разбиение записи изменилось после просмотра. Подготовьте новый план.')
             self.set_phase(step=1)
             cloud = DriveBackup(adapter, self.config(), lambda text: self.set_phase(detail=text)) if current['mode'] == 'google' else None
             backup = cloud.create(self.store, current, identity) if cloud else self.store.backup_file(current['target'], identity)
@@ -418,11 +428,15 @@ class Engine:
                 def report(message):
                     self.set_phase(detail=message)
                     self.store.log('INFO', message)
+                def write_progress(progress):
+                    result['write_progress'] = progress
+                    atomic_json(result_path, result)
                 adapter.report = report
+                adapter.write_progress_callback = write_progress
                 self.store.log('INFO', 'Начинаем запись подтверждённого плана. Резервная копия проверена.')
                 adapter.write(approved, prepared=prepared)
                 stage = 'Сверка результата'
-                self.store.log('INFO', 'Запрос записи завершён. Читаем таблицу для сверки.')
+                self.store.log('INFO', 'Отправка всех частей завершена. Читаем таблицу для итоговой сверки.')
                 self.set_phase(step=3, detail='')
                 adapter.verify(approved)
                 result.update(status='done', completed=stamp(), message='Обновление завершено, результат проверен.')
@@ -435,6 +449,8 @@ class Engine:
             except Exception as exc:
                 reason = str(exc) if isinstance(exc, AppError) else 'Операция не завершена.'
                 message = f'{stage}: {reason} Резервная копия сохранена. Подготовьте новый план после проверки таблицы.'
+                if isinstance(getattr(adapter, 'write_progress', None), dict):
+                    result['write_progress'] = dict(adapter.write_progress)
                 result.update(status='uncertain', message=message)
                 atomic_json(result_path, result)
                 raise AppError(message) from None
