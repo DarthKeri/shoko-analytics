@@ -15,6 +15,7 @@ from .plans import save_plan, load_plan
 from .sheet_backups import planned_backups
 from .garage import prepare_garage, comparison_before, formula_text
 from .validation import read_prostoi_source, read_bot_source, check_bot_source
+from .activity import ActivityLedger
 
 STEPS = ['Проверка файлов и доступа', 'Чтение исходных данных', 'Проверка CSV', 'Подготовка изменений']
 CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'google_auth_mode', 'google_oauth_client', 'developer', 'appearance', 'last_date'}
@@ -28,8 +29,12 @@ def resolved(value, processing_date):
 
 
 class Engine:
-    def __init__(self, root):
+    def __init__(self, root, record_launch=True):
         self.store = Store(root)
+        self.activity = ActivityLedger(self.store.root)
+        self.record_launch = record_launch
+        if record_launch and not self.activity.record_launch():
+            self.store.log('WARNING', self.activity.error)
         self.google = GoogleAuth(self.store)
         self.lock = threading.RLock()
         self.cancelled = threading.Event()
@@ -38,7 +43,8 @@ class Engine:
         self.checks = {}
         self.developer_results = {}
         self.worker = None
-        self.store.log('INFO', 'Приложение запущено. Запись выполняется только после просмотра и подтверждения.')
+        if record_launch:
+            self.store.log('INFO', 'Приложение запущено. Запись выполняется только после просмотра и подтверждения.')
         # Interrupted write is never declared successful after restart.
         for path in (self.store.root / 'plans').glob('*.result.json'):
             data = json.loads(path.read_text(encoding='utf-8'))
@@ -49,6 +55,17 @@ class Engine:
 
     def config(self):
         return copy.deepcopy(self.store.config)
+
+    def plan_config_digest(self):
+        # Display preferences do not change the reviewed data or invalidate approval.
+        return digest({k: v for k, v in self.config().items() if k != 'chart_type'})
+
+    def set_chart_type(self, value):
+        if value not in ('line', 'bars'):
+            raise AppError('Выберите вид графика: Линии или Столбцы.')
+        with self.lock:
+            self.store.save_config({'chart_type': value})
+        return {'chart_type': value}
 
     def busy(self):
         return self.state['phase'] in ('preparing', 'writing', 'checking', 'connecting')
@@ -114,7 +131,7 @@ class Engine:
                 target_allowed = target_key(self.config()) in self.config()['allowed_targets']
             except AppError:
                 target_allowed = False
-            return dict(target_allowed=target_allowed, config=self.config(), root=str(self.store.root), state=copy.deepcopy(self.state), checks=copy.deepcopy(self.checks), plan=plan,
+            return dict(target_allowed=target_allowed, config=self.config(), root=str(self.store.root), state=copy.deepcopy(self.state), checks=copy.deepcopy(self.checks), plan=plan, activity=self.activity.summary(histories),
                         history=sorted(histories, key=lambda h: h['created'], reverse=True)[:100], copies=self.store.copies()[:100], logs=self.store.logs(), developer=copy.deepcopy(self.developer_results), google_errors=self.store.google_errors(), google_auth=self.google.status(self.config()))
 
     def plan_page(self, kind='changes', sheet='', offset=0):
@@ -304,7 +321,7 @@ class Engine:
                 if file_hash(item['path']) != item['sha256']:
                     raise AppError('Исходный файл изменился во время подготовки. Повторите обновление.')
             plan = dict(id=identity, date=processing_date, url=url, created=stamp(), rule='primary-legacy-v1+garage-v1',
-                        before=before, after=after, changes=changes, sources=sources, config_digest=digest(self.config()), warnings=warnings, **garage_plan)
+                        before=before, after=after, changes=changes, sources=sources, config_digest=self.plan_config_digest(), warnings=warnings, **garage_plan)
             plan['sheet_backups'] = planned_backups(before, changes, garage_plan['operations'], derived=garage_plan.get('derived', []))
             if config['target_mode'] == 'google' and config['google_auth_mode'] == 'oauth':
                 plan['google_identity'] = self.google.identity(config)
@@ -337,7 +354,7 @@ class Engine:
                 raise AppError('Изменений нет. Запись и новая резервная копия не нужны.')
         def work():
             guard_target(self.config())
-            if digest(self.config()) != approved['config_digest']:
+            if self.plan_config_digest() != approved['config_digest']:
                 raise AppError('Настройки изменились после просмотра. Подготовьте новый план.')
             if self.config()['target_mode'] == 'google' and self.config()['google_auth_mode'] == 'oauth' and approved.get('google_identity') != self.google.identity(self.config()):
                 raise AppError('Google-аккаунт изменился после просмотра. Подготовьте новый план.')
@@ -383,7 +400,7 @@ class Engine:
                 self.store.log('INFO', 'Запрос записи завершён. Читаем таблицу для сверки.')
                 self.set_phase(step=3, detail='')
                 adapter.verify(approved)
-                result.update(status='done', message='Обновление завершено, результат проверен.')
+                result.update(status='done', completed=stamp(), message='Обновление завершено, результат проверен.')
                 atomic_json(result_path, result)
                 with self.lock:
                     self.plan = None  # approved plan is single-use

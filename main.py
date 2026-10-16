@@ -34,7 +34,7 @@ def main():
         raise AppError('Файлы интерфейса не найдены. Выполните сборку frontend.')
     root.mkdir(parents=True, exist_ok=True)
     lock = InstanceLock(root)
-    engine = Engine(root)
+    engine = Engine(root, record_launch=not (args.smoke or args.ui_smoke))
     server = Server(engine, assets, args.port)
     try:
         if args.smoke:
@@ -50,7 +50,7 @@ def main():
             if os.name == 'nt':
                 import ctypes
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Shoko.Analytics.Desktop')
-            window = webview.create_window('Shoko Analytics', server.url, width=1120, height=760, min_size=(860, 600), background_color='#0d0d0d', confirm_close=False)
+            window = webview.create_window('Shoko Analytics', server.url, width=1280, height=820, min_size=(860, 600), background_color='#0d0d0d', confirm_close=False)
             server.window = window
             def closing():
                 phase = engine.state['phase']

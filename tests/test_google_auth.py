@@ -339,7 +339,7 @@ class ErrorAndEngineTests(unittest.TestCase):
                 engine.save_settings({'target_mode': 'google', 'target': source, 'test_copy_confirmed': True, 'google_oauth_client': str(path)})
                 saved = {'credentials': json.loads(credentials().to_json()), 'email': 'first@example.test', 'client_fingerprint': digest(client_config(str(path)))}
                 engine.google.save(saved)
-                plan = {'id': 'reviewed-plan', 'config_digest': digest(engine.config()), 'google_identity': engine.google.identity(engine.config())}
+                plan = {'id': 'reviewed-plan', 'config_digest': engine.plan_config_digest(), 'google_identity': engine.google.identity(engine.config())}
                 plan['checksum'] = digest(plan)
                 engine.plan = plan
                 engine.state['phase'] = 'preview'

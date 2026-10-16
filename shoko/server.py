@@ -101,6 +101,8 @@ class Server:
     def action(self, body):
         action = body.get('action')
         engine = self.engine
+        if action == 'chart-type':
+            return engine.set_chart_type(body.get('value'))
         if action == 'developer':
             return engine.developer_action(body.get('kind'))
         if action == 'settings':
@@ -187,6 +189,10 @@ class Server:
                     new_lock.close()
                     raise
                 engine.store = new_store
+                from .activity import ActivityLedger
+                engine.activity = ActivityLedger(new_store.root)
+                if engine.record_launch and not engine.activity.record_launch():
+                    new_store.log('WARNING', engine.activity.error)
                 if getattr(engine, 'root_lock', None):
                     engine.root_lock.close()
                 engine.root_lock = new_lock
