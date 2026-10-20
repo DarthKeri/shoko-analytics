@@ -44,7 +44,7 @@ def atomic_json(path, value):
 
 
 def defaults():
-    return dict(initialized=False, prostoi='', drivers='', csv='', target_mode='local', target='',
+    return dict(initialized=False, prices='', drivers_previous='', prostoi='', drivers='', csv='', target_mode='local', target='',
                 credentials='', google_auth_mode='oauth', google_oauth_client='', google_backup_folder='', allowed_targets=[], developer=False, appearance='classic', chart_type='line', last_date='')
 
 

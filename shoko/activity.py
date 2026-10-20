@@ -6,7 +6,8 @@ from pathlib import Path
 from .storage import atomic_json
 
 MOSCOW = timezone(timedelta(hours=3))
-START_MESSAGE = 'Приложение запущено. Запись выполняется только после просмотра и подтверждения.'
+START_MESSAGE = 'Приложение запущено. Запись выполняется только после подтверждения.'
+LEGACY_START_MESSAGE = 'Приложение запущено. Запись выполняется только после просмотра и подтверждения.'
 
 
 def moment(value):
@@ -36,7 +37,7 @@ class ActivityLedger:
                 if log.is_file():
                     with log.open(encoding='utf-8', errors='replace') as stream:
                         for line in stream:
-                            match = re.fullmatch(r'\[([^\]]+)\] \[INFO\] ' + re.escape(START_MESSAGE) + r'\s*', line)
+                            match = re.fullmatch(r'\[([^\]]+)\] \[INFO\] ' + '(?:' + '|'.join(map(re.escape,(START_MESSAGE,LEGACY_START_MESSAGE))) + r')\s*', line)
                             if match:
                                 try:
                                     day = moment(match[1]).date().isoformat()

@@ -36,7 +36,7 @@ def run_selftest():
                 engine.prepare('', paths['last_date']); wait(engine)
                 require(engine.state['phase'] == 'preview' and engine.plan['after'][TARGET][1][5:8] == [1300,1200,1])
                 require(file_hash(paths['target']) == original and not engine.store.copies())
-            check('Расчёт и предпросмотр без записи', preview)
+            check('Расчёт и подготовка без записи', preview)
             plan = engine.plan
             def wrong_approval():
                 try: engine.write(plan['id'], 'not-reviewed')

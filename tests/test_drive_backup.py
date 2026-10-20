@@ -202,7 +202,7 @@ class GoogleWriteGateTests(unittest.TestCase):
         self.snapshot = {'mode': 'google', 'target': SOURCE, 'fingerprint': 'reviewed', 'sheets': {}}
         self.adapter = SimpleNamespace(id=SOURCE, session=self.fixture, snapshot=Mock(return_value=self.snapshot), prepare_write=Mock(return_value=b'prepared'), write=Mock(), verify=Mock())
         self.plan = {'id': 'fixture-plan', 'date': '2026-10-14', 'url': 'https://garage.example.test', 'created': '2026-10-14',
-                     'warnings': [], 'before': self.snapshot, 'after': {}, 'changes': [], 'sources': {}, 'config_digest': self.engine.plan_config_digest()}
+                     'warnings': [], 'before': self.snapshot, 'after': {}, 'changes': [{'sheet':'Fixture','row':1,'col':1,'after':1}], 'sources': {}, 'config_digest': self.engine.plan_config_digest()}
         self.plan['checksum'] = digest(self.plan)
         self.engine.plan = self.plan
         self.engine.state['phase'] = 'preview'

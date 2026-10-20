@@ -7,8 +7,8 @@ import uuid
 from datetime import date, timedelta
 from pathlib import Path
 from .storage import AppError, Store, atomic_json, digest, file_hash, stamp
-from .adapters import readable, read_excel, read_driver_excel, read_csv, target, guard_target, target_key, changes_for, normalize_merged_output, PROTECTED_ARCHIVE
-from .calculation import assemble_prostoi, calculate, PROSTOI, DRIVERS, TARGET, GARAGE
+from .adapters import readable, target, guard_target, target_key, changes_for, normalize_merged_output, PROTECTED_ARCHIVE
+from .calculation import TARGET, GARAGE
 from .drive_backup import DriveBackup
 from .google_auth import GoogleAuth, client_config
 from .plans import save_plan, load_plan
@@ -18,15 +18,8 @@ from .garage import prepare_garage, comparison_before, formula_text
 from .validation import read_prostoi_source, read_bot_source, check_bot_source
 from .activity import ActivityLedger
 
-STEPS = ['Проверка файлов и доступа', 'Чтение исходных данных', 'Проверка CSV', 'Подготовка изменений']
-CONFIG_KEYS = {'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'google_auth_mode', 'google_oauth_client', 'developer', 'appearance', 'last_date'}
-
-
-def resolved(value, processing_date):
-    try:
-        return value.format(year=processing_date.year, yy=str(processing_date.year)[-2:], month=f'{processing_date.month:02d}')
-    except (KeyError, ValueError, IndexError):
-        raise AppError('Неверный шаблон пути. Допустимы {year}, {yy} и {month}.') from None
+STEPS = ['Проверка файлов и доступа', 'Чтение исходных данных', 'Проверка расчётов', 'Подготовка изменений']
+CONFIG_KEYS = {'prices', 'drivers_previous', 'prostoi', 'drivers', 'csv', 'target_mode', 'target', 'credentials', 'google_backup_folder', 'google_auth_mode', 'google_oauth_client', 'developer', 'appearance', 'last_date'}
 
 
 class Engine:
@@ -45,7 +38,7 @@ class Engine:
         self.developer_results = {}
         self.worker = None
         if record_launch:
-            self.store.log('INFO', 'Приложение запущено. Запись выполняется только после просмотра и подтверждения.')
+            self.store.log('INFO', 'Приложение запущено. Запись выполняется только после подтверждения.')
         # Interrupted write is never declared successful after restart.
         for path in (self.store.root / 'plans').glob('*.result.json'):
             data = json.loads(path.read_text(encoding='utf-8'))
@@ -123,7 +116,7 @@ class Engine:
             self.store.save_config(candidate)
             self.plan = None
             self.state.update(phase='idle', plan_id='', error='')
-            dependencies = {'prostoi': ('prostoi', 'last_date'), 'drivers': ('drivers', 'last_date'),
+            dependencies = {'prices': ('prices', 'last_date'), 'fleet': ('drivers', 'drivers_previous', 'last_date'), 'prostoi': ('prostoi', 'last_date'), 'drivers': ('drivers', 'drivers_previous', 'last_date'),
                             'target': ('target', 'target_mode', 'credentials', 'allowed_targets'),
                             'credentials': ('credentials',), 'csv': ('csv',)}
             dependencies['csv'] += ('target', 'target_mode', 'credentials', 'allowed_targets', 'google_auth_mode', 'google_oauth_client')
@@ -158,6 +151,10 @@ class Engine:
                 plan['garage'] = self.plan.get('garage')
                 plan['sheet_backups'] = self.plan.get('sheet_backups', [])
                 plan['google_write'] = self.plan.get('google_write')
+                plan['operation_label'] = self.plan.get('operation_label', '')
+                plan['selected_operations'] = self.plan.get('selected_operations', [])
+                plan['model_rows'] = self.plan.get('model_rows', [])
+                plan['details'] = self.plan.get('details', [])
             try:
                 target_allowed = target_key(self.config()) in self.config()['allowed_targets']
             except AppError:
@@ -224,20 +221,20 @@ class Engine:
         if self.cancelled.is_set():
             raise AppError('Подготовка отменена.')
 
-    def inputs(self, config, processing_date):
-        result = dict(config)
-        result['prostoi'] = resolved(config['prostoi'], processing_date)
-        result['drivers'] = resolved(config['drivers'], processing_date - timedelta(days=1))
-        return result
-
     def check_one(self, name, config, processing_date):
-        if name == 'prostoi':
+        from . import docx_sources
+        if name == 'prices':
+            return docx_sources.prices(config, processing_date)[2]
+        elif name == 'fleet':
+            from .docx_rules import apply_fleet
+            data,paths,detail=docx_sources.fleet(config,processing_date)
+            snapshot=target(config,self.google).snapshot(only=[TARGET],include_legacy=False)
+            apply_fleet(*data,snapshot['sheets'][TARGET]['values'],dates=[processing_date-timedelta(days=n) for n in (1,8,15)])
+            return detail
+        elif name == 'prostoi':
             return read_prostoi_source(config['prostoi'], processing_date)[2]
         elif name == 'drivers':
-            source_date = processing_date - timedelta(days=1)
-            read_driver_excel(config['drivers'], source_date)
-            return (f'Начисления за {source_date:%d.%m.%Y}: лист «{source_date.day:02d}», '
-                    'обязательные колонки и данные проверены.')
+            return docx_sources.actions(config, processing_date)[2]
         elif name == 'credentials':
             if config.get('google_auth_mode') == 'oauth':
                 client_config(config.get('google_oauth_client', ''))
@@ -268,8 +265,8 @@ class Engine:
 
     def check(self, name='all', processing_date=''):
         processing = date.fromisoformat(processing_date or date.today().isoformat())
-        config = self.inputs(self.config(), processing)
-        names = ['prostoi', 'drivers', 'target', 'csv'] if name == 'all' else [name]
+        config = self.config()
+        names = ['prices', 'drivers', 'fleet', 'target', 'csv'] if name == 'all' else [name]
         if name == 'all' and config['target_mode'] == 'google':
             names.append('backup')
         def work():
@@ -291,72 +288,153 @@ class Engine:
             self.set_phase(phase='idle' if not errors else 'error', error='\n'.join(errors))
         return self.launch('check', work)
 
-    def prepare(self, url, processing_date, csv_confirmed=False):
+    def prepare(self, url, processing_date, csv_confirmed=False, operation='all', selected_operations=None):
+        from . import docx_sources
+        from .docx_rules import apply_prices, apply_actions, apply_fleet, price_notes
+        from .model_rows import requested_models, ensure_target_rows, prepare_garage_rows
+        labels = {
+            'csv': 'Загрузить файл CSV в лист „Выгрузка_Бот_Гараж“',
+            'garage': 'Обновить цены конкурентов в листе „Гараж“',
+            'actions': 'Обновить количество акционных водителей в листе „Предложение цен“',
+            'fleet': 'Обновить состав автопарка и простои в листе „Предложение цен“',
+            'prices': 'Обновить цены аренды из приказа в листе „Предложение цен“',
+        }
+        order = ('csv', 'garage', 'actions', 'fleet', 'prices')
+        if selected_operations is None:
+            selected_operations = list(order) if operation == 'all' else [operation]
+        if not isinstance(selected_operations, list) or len(selected_operations) > len(order) or any(not isinstance(item, str) or item not in labels for item in selected_operations):
+            raise AppError('Неизвестная операция обновления.')
+        selected = [item for item in order if item in selected_operations]
+        if not selected:
+            raise AppError('Отметьте хотя бы один пункт для обновления.')
+        selection_key = 'all' if len(selected) == len(order) else selected[0] if len(selected) == 1 else 'selected'
+        selection_label = '; '.join(labels[item] for item in selected)
         processing = date.fromisoformat(processing_date)
-        config = self.inputs(self.config(), processing)
-        required = [('prostoi', 'Средние цены и простои'), ('drivers', 'Начисления'), ('target', 'Целевая копия')]
+        config = self.config()
+        required = [('target', 'Целевая копия')]
+        if 'prices' in selected:
+            required.append(('prices', 'Приказ_цены_2026.xlsx'))
+        if any(item in selected for item in ('actions', 'fleet')):
+            required.append(('drivers', 'Начисления за нужный месяц'))
+        if 'csv' in selected:
+            required.append(('csv', 'CSV Гаража'))
         if config['target_mode'] == 'google':
             if config['google_auth_mode'] == 'service_account':
-                required += [('credentials', 'Ключ Google')]
-            required += [('google_backup_folder', 'Папка копий Google Drive')]
-        required += [('csv', 'CSV Гаража')]
-        missing = [label for key, label in required if not config[key].strip()]
+                required.append(('credentials', 'Ключ Google'))
+            required.append(('google_backup_folder', 'Папка копий Google Drive'))
+        missing = [label for key, label in required if not config.get(key, '').strip()]
         if missing:
             raise AppError('Заполните настройки: ' + ', '.join(missing) + '. Обновление не запущено.')
-        if config['target_mode'] == 'google' and config['google_auth_mode'] == 'oauth':
-            client_config(config.get('google_oauth_client', ''))
-        url = ''
         guard_target(config)
         with self.lock:
             if self.busy():
                 raise AppError('Дождитесь завершения операции.')
-            latest = self.config()
-            latest.update(last_date=processing_date)
-            if latest != self.config():
-                self.store.save_config(latest)
+            if config.get('last_date') != processing_date:
+                self.store.save_config(dict(config, last_date=processing_date))
         def work():
             self.plan = None
-            self.set_phase(plan_id='', step=0)
+            self.set_phase(plan_id='', step=0, detail=selection_label)
             identity = uuid.uuid4().hex
-            for key in ('prostoi', 'drivers'):
-                readable(config[key], {'.xlsx'})
             adapter = target(config, self.google)
+            # Validate and fingerprint only inputs required by the selected operation.
+            source_hashes = {}; source_data = {}; warnings = []; details = []
+            def capture(reader):
+                values, paths, detail = reader(config, processing)
+                for path in paths:
+                    # Re-read hashing after source readers as well; no changed file may be approved.
+                    if path not in source_hashes:
+                        source_hashes[path] = file_hash(path)
+                details.append(detail)
+                self.store.log('INFO', detail + ' Запись не выполнялась.')
+                self.check_cancel()
+                return values
+            # Hash before each source read, including month-specific sources.
+            needed_paths = []
+            if 'prices' in selected:
+                needed_paths.append(docx_sources.expanded(config['prices'], processing))
+            if any(item in selected for item in ('actions', 'fleet')):
+                offsets = (1, 8, 15) if 'fleet' in selected else (1,)
+                needed_paths.extend(docx_sources.monthly_path(config, processing-timedelta(days=n), processing) for n in offsets)
+            if 'csv' in selected:
+                needed_paths.append(config['csv'])
+            if config['target_mode'] == 'local' and any(Path(path).resolve() == Path(config['target']).resolve() for path in needed_paths):
+                raise AppError('Целевая книга совпадает с исходным файлом. Выберите отдельную копию.')
+            for path in needed_paths:
+                source_hashes[path] = file_hash(readable(path, {'.xlsx', '.csv'}))
             if config['target_mode'] == 'google':
                 DriveBackup(adapter, config).check()
-            self.check_cancel()
-            source_hashes = {key: file_hash(config[key]) for key in ('prostoi', 'drivers')}
-            self.set_phase(step=1)
-            current, previous, _ = read_prostoi_source(config['prostoi'], processing)
-            drivers = read_driver_excel(config['drivers'], processing - timedelta(days=1))
-            self.check_cancel()
-            self.set_phase(step=2)
-            csv_path = readable(config['csv'], {'.csv'})
-            source_hashes['csv'] = file_hash(csv_path)
-            garage = read_bot_source(csv_path)
-            self.check_cancel()
-            self.set_phase(step=3)
-            before = adapter.snapshot()
-            prostoi = assemble_prostoi(current, previous, before['sheets'].get(PROSTOI, {}).get('values', []), processing)
-            prices, warnings = calculate(prostoi, drivers, before['sheets'][TARGET]['values'], processing)
-            after = {PROSTOI: prostoi, DRIVERS: drivers, TARGET: prices, GARAGE: garage}
-            garage_plan = prepare_garage(before, after, garage, processing)
-            if garage_plan['garage']['archived_errors']:
-                warnings.append(f'В старом Гараже {garage_plan["garage"]["archived_errors"]} ошибок формул: их вид сохранится текстом в архиве. Исходные формулы останутся в полной резервной копии.')
+            self.check_cancel(); self.set_phase(step=1)
+            if 'prices' in selected:
+                source_data['prices'] = capture(docx_sources.prices)
+            if 'actions' in selected:
+                source_data['actions'] = capture(docx_sources.actions)
+            if 'fleet' in selected:
+                source_data['fleet'] = capture(docx_sources.fleet)
+            if 'csv' in selected:
+                source_data['csv'] = read_bot_source(config['csv'])
+            self.check_cancel(); self.set_phase(step=2)
+            only = None if 'garage' in selected else [TARGET] + ([GARAGE] if 'csv' in selected else [])
+            before = adapter.snapshot(only=only, include_legacy=False)
+            only = only or list(before['sheets'])
+            after = {}; garage_plan = {'operations': [], 'derived': []}
+            rows = copy.deepcopy(before['sheets'][TARGET]['values'])
+            garage_csv = source_data.get('csv') or before['sheets'].get(GARAGE, {}).get('values', []) if 'garage' in selected else None
+            rows,model_rows,row_templates=ensure_target_rows(before,rows,requested_models(source_data,garage_csv))
+            if 'prices' in selected:
+                rows, matched = apply_prices(source_data['prices'], rows)
+                warnings.extend(price_notes(source_data['prices']))
+                details.append(f'Цены F/G: совпавших моделей {matched}.')
+            if 'actions' in selected:
+                rows, count, notes = apply_actions(source_data['actions'], rows)
+                warnings.extend(notes); details.append(f'Акционные водители: {count} строк с непустым H.')
+            if 'fleet' in selected:
+                rows, matched = apply_fleet(*source_data['fleet'], rows, dates=[processing-timedelta(days=n) for n in (1,8,15)])
+                details.append(f'Состав и простои: совпавших моделей {matched}.')
+            if any(item in selected for item in ('prices', 'actions', 'fleet')):
+                after[TARGET] = rows
+            if 'csv' in selected:
+                after[GARAGE] = source_data['csv']
+            if 'garage' in selected:
+                csv_rows = source_data.get('csv') or before['sheets'].get(GARAGE, {}).get('values', [])
+                after.setdefault(TARGET, rows)
+                virtual,created,formats=prepare_garage_rows(before,after,processing)
+                model_rows.extend(created);row_templates.extend(formats)
+                from .garage import latest_garage
+                source_name=latest_garage(list(before['sheets']))
+                original_source=before['sheets'][source_name]
+                from .driver_prices import bind_driver_prices
+                driver_prices=bind_driver_prices(virtual['sheets'][source_name], after[TARGET], f'Гараж {processing:%d.%m.%Y}')
+                from .garage_repairs import repair_garage_template
+                garage_checks=repair_garage_template(virtual['sheets'][source_name], after[TARGET], f'Гараж {processing:%d.%m.%Y}')
+                garage_plan = prepare_garage(virtual, after, csv_rows, processing, update_links=False, archive_source=original_source)
+                garage_plan['garage_checks']=garage_checks
+                details.append(f'Проверка связей и рекомендаций Гаража: {len(garage_checks)} моделей; без рынка — прочерк.')
+                garage_plan['derived'].extend(driver_prices)
+                skipped = garage_plan['garage'].get('skipped_links', [])
+                if skipped:
+                    detail = 'Сохранены J:O с прочерками и собственной логикой; пропущены при расчётной сверке: ' + ', '.join(item['cell'] for item in skipped) + '.'
+                    details.append(detail)
+                    self.store.log('INFO', detail)
+                if garage_plan['garage']['archived_errors']:
+                    warnings.append('В прежнем Гараже есть ошибки формул. Их состояние сохранится в архиве, исходные формулы — в полной копии.')
+            self.check_cancel(); self.set_phase(step=3)
             baseline = comparison_before(dict(before=before, **garage_plan))
             after, merge_warnings = normalize_merged_output(baseline, after)
             warnings.extend(merge_warnings)
             changes = changes_for(baseline, after)
-            self.check_cancel()
-            sources = {key: {'path': config[key], 'sha256': hash_value} for key, hash_value in source_hashes.items()}
+            sources = {str(index): {'path': path, 'sha256': hash_value} for index, (path, hash_value) in enumerate(source_hashes.items())}
             for item in sources.values():
                 if file_hash(item['path']) != item['sha256']:
                     raise AppError('Исходный файл изменился во время подготовки. Повторите обновление.')
-            plan = dict(id=identity, date=processing_date, url=url, created=stamp(), rule='primary-legacy-v1+garage-v1',
-                        before=before, after=after, changes=changes, sources=sources, config_digest=self.plan_config_digest(), warnings=warnings, **garage_plan)
+            plan = dict(id=identity, date=processing_date, url='', created=stamp(), rule='docx-rtf-v1',
+                        selected_operation=selection_key, selected_operations=selected, operation_label=selection_label, details=details, model_rows=model_rows, row_templates=row_templates,
+                        input_sheets=only, before=before, after=after, changes=changes, sources=sources,
+                        config_digest=self.plan_config_digest(), warnings=warnings, **garage_plan)
             plan['sheet_backups'] = planned_backups(before, changes, garage_plan['operations'], derived=garage_plan.get('derived', []))
+            plan['backup_highlights'] = 1  # Included in the exact confirmed plan checksum.
             if config['target_mode'] == 'google' and config['google_auth_mode'] == 'oauth':
                 plan['google_identity'] = self.google.identity(config)
-            prepared = adapter.prepare_write(plan)  # Validate all parts before approval or backup.
+            prepared = adapter.prepare_write(plan)
             if before['mode'] == 'google':
                 plan['google_write'] = batch_summary(prepared)
             plan['checksum'] = digest(plan)
@@ -365,10 +443,8 @@ class Engine:
             with self.lock:
                 self.plan = plan
             self.set_phase(phase='preview', plan_id=identity, error='', step=4)
-            self.store.log('INFO', f'Подготовлен план: {len(changes)} изменений. Запись ожидает подтверждения.')
+            self.store.log('INFO', f'{selection_label}: подготовлено {len(changes)} изменений. Запись ожидает подтверждения.')
             self.store.log('INFO', f'Размер сохранённого плана: {saved_path.stat().st_size / 1_000_000:.2f} МБ.')
-            info = garage_plan['garage']
-            self.store.log('INFO', f'Гараж: {info["matched"]} строк с предложениями, {info["cleared"]} без предложений, {info["ignored"]} исключений. Запись ожидает подтверждения.')
         return self.launch('prepare', work)
 
     def cancel(self):
@@ -383,14 +459,14 @@ class Engine:
             if not self.plan or self.plan['id'] != identity or self.plan['checksum'] != checksum or self.state['phase'] != 'preview':
                 raise AppError('Подтверждение не соответствует текущему плану. Подготовьте обновление заново.')
             approved = copy.deepcopy(self.plan)
-            if approved.get('garage') and not approved['changes'] and not approved.get('operations'):
+            if not approved['changes'] and not approved.get('operations'):
                 raise AppError('Изменений нет. Запись и новая резервная копия не нужны.')
         def work():
             guard_target(self.config())
             if self.plan_config_digest() != approved['config_digest']:
-                raise AppError('Настройки изменились после просмотра. Подготовьте новый план.')
+                raise AppError('Настройки изменились после подготовки. Подготовьте новый план.')
             if self.config()['target_mode'] == 'google' and self.config()['google_auth_mode'] == 'oauth' and approved.get('google_identity') != self.google.identity(self.config()):
-                raise AppError('Google-аккаунт изменился после просмотра. Подготовьте новый план.')
+                raise AppError('Google-аккаунт изменился после подготовки. Подготовьте новый план.')
             saved = load_plan(self.store.root, identity)
             content = dict(saved)
             expected = content.pop('checksum')
@@ -398,15 +474,15 @@ class Engine:
                 raise AppError('Сохранённый план повреждён. Запись заблокирована.')
             for item in approved['sources'].values():
                 if file_hash(item['path']) != item['sha256']:
-                    raise AppError('Исходный файл изменился после просмотра. Подготовьте новый план.')
+                    raise AppError('Исходный файл изменился после подготовки. Подготовьте новый план.')
             self.set_phase(step=0)
             adapter = target(self.config(), self.google)
-            current = adapter.snapshot()
+            current = adapter.snapshot(only=approved.get('input_sheets'))
             if current['fingerprint'] != approved['before']['fingerprint']:
-                raise AppError('Целевая таблица изменилась после просмотра. Подготовьте новый план.')
+                raise AppError('Целевая таблица изменилась после подготовки. Подготовьте новый план.')
             prepared = adapter.prepare_write(approved)  # Never create a backup for an unsendable plan.
             if approved.get('google_write') and batch_summary(prepared) != approved['google_write']:
-                raise AppError('Разбиение записи изменилось после просмотра. Подготовьте новый план.')
+                raise AppError('Разбиение записи изменилось после подготовки. Подготовьте новый план.')
             self.set_phase(step=1)
             cloud = DriveBackup(adapter, self.config(), lambda text: self.set_phase(detail=text)) if current['mode'] == 'google' else None
             backup = cloud.create(self.store, current, identity) if cloud else self.store.backup_file(current['target'], identity)
@@ -414,10 +490,13 @@ class Engine:
             self.store.log('INFO', 'Резервная копия сохранена и проверена: ' + backup['id'])
             # Recheck after the potentially slow backup, immediately before writing.
             self.store.log('INFO', 'После копирования повторно проверяем актуальность таблицы. Запись ещё не начата.')
-            if adapter.snapshot()['fingerprint'] != current['fingerprint']:
+            if adapter.snapshot(only=approved.get('input_sheets'))['fingerprint'] != current['fingerprint']:
                 raise AppError('Целевая таблица изменилась во время создания копии. Подготовьте новый план.')
             if cloud and cloud.metadata(cloud.source)['version'] != backup['source_version']:
                 raise AppError('Google-таблица изменилась после создания копии. Подготовьте новый план.')
+            for item in approved['sources'].values():
+                if file_hash(readable(item['path'], {'.xlsx','.csv'})) != item['sha256']:
+                    raise AppError('Исходный файл изменился во время создания копии. Запись не начата; подготовьте новый план.')
             self.set_phase(detail='')
             result = dict(id=identity, created=stamp(), date=approved['date'], status='writing', changes=len(approved['changes']), backup=backup['id'], sheet_backups=approved.get('sheet_backups', []), message='Запись и сверка')
             result_path = self.store.root / 'plans' / (identity + '.result.json')

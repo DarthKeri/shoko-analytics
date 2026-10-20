@@ -49,12 +49,12 @@ class DriverStatusTests(unittest.TestCase):
         self.assertIn(result['message'], self.engine.store.logs())
 
     def test_missing_discount_blocks_individual_and_all_status(self):
-        self.edit(lambda wb: setattr(wb['19']['B1'], 'value', None))
+        self.edit(lambda wb: setattr(wb['19']['H1'], 'value', None))
         for source in ('drivers', 'all'):
             with self.subTest(source=source):
                 result = self.check(source=source)
                 self.assertFalse(result['ok'])
-                for value in ('19.08.2026', 'drivers.xlsx', 'лист «19»', 'Скидка/наценка', 'выгрузите начисления'):
+                for value in ('19.08.2026', 'drivers.xlsx', 'лист «19»', 'Скидка/наценка'):
                     self.assertIn(value, result['message'])
                 self.assertIn(result['message'], self.engine.state['error'])
 
@@ -80,21 +80,21 @@ class DriverStatusTests(unittest.TestCase):
         self.assertIn('Скидка/наценка', result['message'])
 
     def test_missing_year_never_falls_back_to_unrelated_am_column(self):
-        self.edit(lambda wb: setattr(wb['19']['A1'], 'value', None))
+        self.edit(lambda wb: setattr(wb['19']['AO1'], 'value', None))
         result = self.check()
         self.assertFalse(result['ok'])
         self.assertIn('Год ПТС', result['message'])
 
     def test_shifted_model_column_is_rejected(self):
         def shift(wb):
-            wb['19']['X1'] = wb['19']['W1'].value
-            wb['19']['X2'] = wb['19']['W2'].value
-            wb['19']['W1'] = None
-            wb['19']['W2'] = None
+            wb['19']['AN1'] = wb['19']['AM1'].value
+            wb['19']['AN2'] = wb['19']['AM2'].value
+            wb['19']['AM1'] = None
+            wb['19']['AM2'] = None
         self.edit(shift)
         result = self.check()
         self.assertFalse(result['ok'])
-        self.assertIn('столбце W', result['message'])
+        self.assertIn('AM/AO', result['message'])
 
     def test_duplicate_required_header_is_rejected(self):
         self.edit(lambda wb: setattr(wb['19']['C1'], 'value', 'Скидка/наценка'))
@@ -113,14 +113,14 @@ class DriverStatusTests(unittest.TestCase):
         self.assertIn('нет строк', result['message'])
 
     def test_invalid_discounted_driver_is_reported_during_status(self):
-        self.edit(lambda wb: setattr(wb['19']['A2'], 'value', None))
+        self.edit(lambda wb: setattr(wb['19']['AO2'], 'value', None))
         result = self.check()
         self.assertFalse(result['ok'])
         self.assertIn('19.08.2026', result['message'])
-        self.assertIn('Не указан год ПТС', result['message'])
+        self.assertIn('AM/AO', result['message'])
 
     def test_zero_discount_is_valid_and_counts_as_populated(self):
-        self.edit(lambda wb: setattr(wb['19']['B2'], 'value', 0))
+        self.edit(lambda wb: setattr(wb['19']['H2'], 'value', 0))
         self.assertTrue(self.check()['ok'])
 
     def test_missing_file_error_includes_expected_date(self):
@@ -153,14 +153,14 @@ class DriverStatusTests(unittest.TestCase):
         self.assertEqual(list((self.engine.store.root / 'plans').iterdir()), [])
 
     def test_corrected_file_can_be_checked_again(self):
-        self.edit(lambda wb: setattr(wb['19']['B1'], 'value', None))
+        self.edit(lambda wb: setattr(wb['19']['H1'], 'value', None))
         self.assertFalse(self.check()['ok'])
-        self.edit(lambda wb: setattr(wb['19']['B1'], 'value', 'Скидка/наценка'))
+        self.edit(lambda wb: setattr(wb['19']['H1'], 'value', 'Скидка/наценка'))
         self.assertTrue(self.check()['ok'])
         self.assertEqual(self.engine.state['error'], '')
 
     def test_prepare_and_status_reject_the_same_invalid_source(self):
-        self.edit(lambda wb: setattr(wb['19']['B1'], 'value', None))
+        self.edit(lambda wb: setattr(wb['19']['H1'], 'value', None))
         result = self.check()
         before = file_hash(self.paths['target'])
         self.engine.prepare('https://garage.example.test/fleet/1', '2026-08-20', True)

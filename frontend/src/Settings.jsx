@@ -58,10 +58,10 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
   const field=(label,key,kind='xlsx',example='')=><FileField label={label} kind={kind} example={example} value={form[key]} disabled={busy} onChange={v=>set(key,v)} onError={setError}/>;
   const status=source=>{
     const result=data.checks[source];
-    const dependencies={prostoi:['prostoi','last_date'],drivers:['drivers','last_date'],target:['target','target_mode','credentials'],credentials:['credentials'],backup:['google_backup_folder','target','credentials'],csv:['csv']};
+    const dependencies={prices:['prices','last_date'],fleet:['drivers','drivers_previous','last_date'],prostoi:['prostoi','last_date'],drivers:['drivers','drivers_previous','last_date'],target:['target','target_mode','credentials'],credentials:['credentials'],backup:['google_backup_folder','target','credentials'],csv:['csv']};
     dependencies.csv.push('target','target_mode','credentials','google_auth_mode','google_oauth_client');
     for(const key of ['target','credentials','backup'])dependencies[key].push('google_auth_mode','google_oauth_client');
-    const edited=dependencies[source].some(key=>form[key]!==data.config[key])||(['prostoi','drivers'].includes(source)&&result?.date!==(form.last_date||today()));
+    const edited=dependencies[source].some(key=>form[key]!==data.config[key])||(['prices','fleet','prostoi','drivers'].includes(source)&&result?.date!==(form.last_date||today()));
     const running=checking===source&&data.state.phase==='checking';
     if(!running&&(!result||edited))return null;
     return <div className="settings-check" role="status" aria-live="polite" data-source={source}>{running?<span><Spinner/> Проверка…</span>:<><span>{result.ok?'✓':'✕'} {result.message}</span><small>{timeText(result.checked)}</small></>}</div>;
@@ -80,10 +80,12 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
       <p className="sd-muted">Здесь сохраняются настройки, планы, копии таблиц и журнал.</p></div>}
     {visible(1)&&<div className="settings-group"><h3>Исходные файлы</h3>
       <label className="settings-date">Дата обработки<input type="date" value={form.last_date||today()} disabled={busy} onChange={e=>set('last_date',e.target.value)}/></label>
-      {field('Средние цены и простои','prostoi','xlsx','Средние_цены_простои_2026.xlsx')}
-      <Button disabled={busy} onClick={()=>check('prostoi')}>Проверить простои</Button>{status('prostoi')}
-      {field('Начисления','drivers','xlsx','Начисление_10-26.xlsx')}
-      <Button disabled={busy} onClick={()=>check('drivers')}>Проверить начисления</Button>{status('drivers')}
+      {field('Приказ цен','prices','xlsx','Приказ_цены_2026.xlsx')}
+      <Button disabled={busy} onClick={()=>check('prices')}>Проверить приказ цен</Button>{status('prices')}
+      {field('Начисления за месяц отчётного дня','drivers','xlsx','Начисление_10-26.xlsx')}
+      <Button disabled={busy} onClick={()=>check('drivers')}>Проверить акционных водителей</Button>{status('drivers')}
+      {field('Начисления за предыдущий месяц — при необходимости','drivers_previous','xlsx','Начисление_09-26.xlsx')}
+      <Button disabled={busy} onClick={()=>check('fleet')}>Проверить состав и простои</Button>{status('fleet')}
       {field('Выгрузка Гаража CSV','csv','csv','moskva_2026-10-15.csv')}
       <Button disabled={busy} onClick={()=>check('csv')}>Проверить CSV</Button>{status('csv')}
     </div>}
@@ -92,7 +94,7 @@ export default function Settings({data,refresh,wizard=false,onFinish,onRestart,o
       {form.target_mode==='google'&&form.google_auth_mode==='oauth'&&data.google_auth?.connected&&form.google_oauth_client===data.config.google_oauth_client&&<>
         <div className="settings-subgroup"><h3>Целевая таблица</h3>
           <DrivePicker kind="sheets" value={form.target} disabled={busy} onChange={v=>set('target',v)}/>
-          <label className="sd-switch copy-confirm"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} disabled={busy}/>Это копия для тестов; разрешаю запись в неё</label>
+          <label className="sd-switch copy-confirm"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} disabled={busy}/>Разрешено редактирование</label>
           <Button disabled={busy} onClick={()=>check('target')}>Проверить таблицу</Button>{status('target')}
         </div>
         <div className="settings-subgroup"><h3>Папка резервных копий</h3>

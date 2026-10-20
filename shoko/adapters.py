@@ -107,7 +107,7 @@ def readable(path, suffix):
     return path
 
 
-def read_excel(path, sheet, row_limit=100_000, col_limit=500):
+def read_excel(path, sheet, row_limit=100_000, col_limit=500, strict_shape=True):
     path = readable(path, {'.xlsx'})
     try:
         with path.open('rb') as stream:
@@ -116,7 +116,7 @@ def read_excel(path, sheet, row_limit=100_000, col_limit=500):
                 values.close()
                 raise AppError(f'{path.name}: не найден лист «{sheet}».')
             ws = values[sheet]
-            if row_limit == 100_000 and (ws.max_row > row_limit or ws.max_column > col_limit):
+            if row_limit == 100_000 and (ws.max_row > row_limit or (strict_shape and ws.max_column > col_limit)):
                 values.close()
                 raise AppError('Начисления превышают предел MVP: 100 000 строк / 50 столбцов.')
             rows, cols = min(ws.max_row, row_limit), min(ws.max_column, col_limit)
@@ -201,7 +201,7 @@ def guard_target(config):
         path = Path(key)
         if path == PROTECTED_ARCHIVE or PROTECTED_ARCHIVE in path.parents:
             raise AppError('Исходный архив ScriptExcel защищён. Создайте копию в рабочей папке.')
-        for source in ('prostoi', 'drivers', 'csv'):
+        for source in ('prices', 'drivers_previous', 'prostoi', 'drivers', 'csv'):
             if config.get(source) and path == Path(config[source]).resolve():
                 raise AppError('Целевая книга совпадает с исходным файлом. Выберите отдельную копию.')
     return key
@@ -304,13 +304,16 @@ class LocalTarget:
             finally:
                 wb.close()
 
-    def snapshot(self, extra=()):
+    def snapshot(self, extra=(), only=None, include_legacy=True):
         before_hash = file_hash(self.path)
         values = load_workbook(self.path, data_only=True)
         raw = load_workbook(self.path, data_only=False)
         try:
             sheets = {}
-            for name in managed_names(values.sheetnames, extra):
+            names = managed_names(values.sheetnames, extra) if only is None else [n for n in values.sheetnames if n in only]
+            if only is None and not include_legacy:
+                names = [name for name in names if name not in (PROSTOI, DRIVERS)]
+            for name in names:
                 if name not in values.sheetnames:
                     continue
                 ws = values[name]
@@ -342,10 +345,12 @@ class LocalTarget:
                     raise AppError('BF-копия с таким именем уже существует. Подготовьте новый план.')
                 backup = workbook.copy_worksheet(workbook[item['source']])
                 backup.title = item['target']
+                workbook.move_sheet(backup, offset=workbook.sheetnames.index(item['source']) + 1 - workbook.sheetnames.index(backup.title))
             for op in plan.get('operations', []):
                 if op['kind'] == 'archive':
                     archive = workbook.copy_worksheet(workbook[op['source']])
                     archive.title = op['target']
+                    workbook.move_sheet(archive, offset=workbook.sheetnames.index(op['source']) + 1 - workbook.sheetnames.index(archive.title))
                     frozen = plan['after'][op['target']]
                     for row in archive:
                         for c in row:
@@ -360,6 +365,10 @@ class LocalTarget:
             for name in plan['after']:
                 if name not in workbook.sheetnames:
                     workbook.create_sheet(name)
+            from copy import copy as clone
+            for item in plan.get('row_templates', []):
+                ws=workbook[item['sheet']]
+                for col in range(1,item['cols']+1):ws.cell(item['row'],col)._style=clone(ws.cell(item['source_row'],col)._style)
             for change in plan['changes']:
                 c = workbook[change['sheet']].cell(change['row'], change['col'])
                 c.value = change['after'] if change['after'] != '' else None
@@ -367,9 +376,20 @@ class LocalTarget:
                     c.data_type = 'f'
                 elif isinstance(change['after'], str) and change['after']:
                     c.data_type = 's'  # spreadsheet formulas from CSV are treated as text
+            if plan.get('backup_highlights')==1:
+                from openpyxl.styles import PatternFill
+                from .sheet_backups import highlight_ranges,HIGHLIGHT_BACKGROUND,HIGHLIGHT_FOREGROUND
+                for item in plan.get('sheet_backups',[]):
+                    ws=workbook[item['target']]
+                    for area in highlight_ranges(plan,item['source']):
+                        for row in ws.iter_rows(min_row=area['startRowIndex']+1,max_row=area['endRowIndex'],
+                                                min_col=area['startColumnIndex']+1,max_col=area['endColumnIndex']):
+                            for c in row:
+                                c.fill=PatternFill('solid',fgColor=HIGHLIGHT_BACKGROUND)
+                                font=clone(c.font);font.color=HIGHLIGHT_FOREGROUND;c.font=font
             workbook.save(temp)
             if file_hash(self.path) != plan['before']['fingerprint']:
-                raise AppError('Книга изменилась после просмотра. Создайте новый план.')
+                raise AppError('Книга изменилась после подготовки. Создайте новый план.')
             os.replace(temp, self.path)
         except PermissionError:
             raise AppError('Не удалось записать книгу. Закройте её в Excel и повторите подготовку.') from None
@@ -386,6 +406,13 @@ class LocalTarget:
                     raise AppError('Не найдена BF-копия листа «' + item['source'] + '».')
                 actual = [[scalar(v) for v in row] for row in workbook[item['target']].values]
                 verify_matrix(actual, backup_matrix(plan['before']['sheets'][item['source']], 'local'), item['target'])
+                if plan.get('backup_highlights')==1:
+                    from .sheet_backups import highlight_ranges,HIGHLIGHT_BACKGROUND
+                    for area in highlight_ranges(plan,item['source']):
+                        for row in workbook[item['target']].iter_rows(min_row=area['startRowIndex']+1,max_row=area['endRowIndex'],
+                                                                       min_col=area['startColumnIndex']+1,max_col=area['endColumnIndex']):
+                            if any(c.fill.fgColor.rgb[-6:]!=HIGHLIGHT_BACKGROUND for c in row):
+                                raise AppError('Подсветка BF-копии не прошла проверку.')
             for change in plan['changes']:
                 value = scalar(workbook[change['sheet']].cell(change['row'], change['col']).value)
                 if value != change['after']:
@@ -492,10 +519,12 @@ class GoogleTarget:
             raise AppError('Шаблон Гаража превышает лимит MVP.')
         return name, rows
 
-    def snapshot(self, extra=(), only=None):
+    def snapshot(self, extra=(), only=None, include_legacy=True):
         meta = self.check()
         titles = {s['properties']['title'] for s in meta.get('sheets', [])}
         names = [name for name in sorted(titles) if name in only] if only is not None else managed_names(sorted(titles), extra)
+        if only is None and not include_legacy:
+            names = [name for name in names if name not in (PROSTOI, DRIVERS)]
         if not names:
             return dict(mode='google', target=self.id, fingerprint=digest(meta), sheets={}, metadata=meta)
         merges = {s['properties']['title']: s.get('merges', []) for s in meta.get('sheets', [])}
@@ -547,15 +576,17 @@ class GoogleTarget:
         baseline = comparison_before(plan)
         sheet_ids = {name: item['id'] for name, item in plan['before']['sheets'].items()}
         used = set(sheet_ids.values()) | {s['properties']['sheetId'] for s in plan['before'].get('metadata', {}).get('sheets', [])}
-        from .sheet_backups import google_backup_requests
-        requests.extend(google_backup_requests(plan, used))
+        from .sheet_backups import google_backup_requests, SheetOrder
+        order = SheetOrder(plan['before'])
+        requests.extend(google_backup_requests(plan, used, order))
         for op in plan.get('operations', []):
             source_id = sheet_ids[op['source']]
             if op['kind'] == 'archive':
                 identity = max(used or {0}) + 1
                 used.add(identity)
                 sheet_ids[op['target']] = identity
-                requests.append({'duplicateSheet': {'sourceSheetId': source_id, 'newSheetId': identity, 'newSheetName': op['target']}})
+                requests.append({'duplicateSheet': {'sourceSheetId': source_id, 'newSheetId': identity, 'newSheetName': op['target'],
+                                                     'insertSheetIndex': order.insert_copy(op['source'], op['target'])}})
                 frozen = plan['after'][op['target']]
                 source = plan['before']['sheets'][op['source']]
                 # The native duplicate already retains literal cells. Freeze only
@@ -574,6 +605,7 @@ class GoogleTarget:
                         requests.append({'updateCells': {'start': {'sheetId': identity, 'rowIndex': r, 'columnIndex': group[0]},
                                          'rows': [{'values': [{'userEnteredValue': google_value(frozen[r][c] if r < len(frozen) and c < len(frozen[r]) else '')} for c in group]}], 'fields': 'userEnteredValue'}})
             elif op['kind'] == 'rename':
+                order.rename(op['source'], op['target'])
                 sheet_ids[op['target']] = source_id
                 requests.append({'updateSheetProperties': {'properties': {'sheetId': source_id, 'title': op['target']}, 'fields': 'title'}})
             else:
@@ -590,6 +622,10 @@ class GoogleTarget:
                 old = baseline['sheets'][name]
                 if needed_rows > old['rows'] or needed_cols > old['cols']:
                     requests.append({'updateSheetProperties': {'properties': {'sheetId': old['id'], 'gridProperties': {'rowCount': max(old['rows'], needed_rows), 'columnCount': max(old['cols'], needed_cols)}}, 'fields': 'gridProperties.rowCount,gridProperties.columnCount'}})
+        for template in plan.get('row_templates', []):
+            identity=sheet_ids[template['sheet']]
+            requests.append({'copyPaste': {'source': {'sheetId':identity,'startRowIndex':template['source_row']-1,'endRowIndex':template['source_row'],'startColumnIndex':0,'endColumnIndex':template['cols']},
+                'destination': {'sheetId':identity,'startRowIndex':template['row']-1,'endRowIndex':template['row'],'startColumnIndex':0,'endColumnIndex':template['cols']},'pasteType':'PASTE_FORMAT','pasteOrientation':'NORMAL'}})
         # Exact rectangles of adjacent changed cells. Never fill holes with a
         # neighbouring value: untouched cells and their formulas must survive.
         grouped = {}
@@ -678,7 +714,8 @@ class GoogleTarget:
                 if strip(actual.get('merges', [])) != strip(source.get('merges', [])):
                     raise AppError('Объединения ячеек BF-копии не совпадают с исходным листом.')
                 verify_matrix(actual['raw'], backup_matrix(source, 'google'), item['target'])
-        result = self.snapshot(extra=plan['after']) if plan.get('operations') or plan.get('garage') else self.snapshot()
+        scope = set(plan['before']['sheets']) | set(plan['after']) if plan.get('rule') == 'docx-rtf-v1' else None
+        result = self.snapshot(only=scope) if scope is not None else (self.snapshot(extra=plan['after']) if plan.get('operations') or plan.get('garage') else self.snapshot())
         baseline = comparison_before(plan)
         renamed = {op['source']: op['target'] for op in plan.get('operations', []) if op['kind'] == 'rename'}
         for name, original in plan['before']['sheets'].items():
@@ -700,6 +737,12 @@ class GoogleTarget:
             value = rows[change['row'] - 1][change['col'] - 1] if change['row'] <= len(rows) and change['col'] <= len(rows[change['row'] - 1]) else ''
             if value != change['after']:
                 raise AppError(f'Ошибка сверки Google: {change["sheet"]}, {change["cell"]}.')
+        for expected in plan.get('preserved', []):
+            rows = result['sheets'][expected['sheet']]['raw']
+            value = cell(rows[expected['row'] - 1] if expected['row'] <= len(rows) else [], expected['col'] - 1)
+            if not equivalent(value, expected['value']):
+                address = f'{get_column_letter(expected["col"])}{expected["row"]}'
+                raise AppError(f'Ошибка сверки: изменилась сохранённая ячейка «{expected["sheet"]}», {address}.')
         for op in plan.get('operations', []):
             if op['kind'] == 'archive':
                 actual = result['sheets'][op['target']]['raw']
@@ -715,14 +758,49 @@ class GoogleTarget:
                     want = expected['value']
                     numeric = type(value) in (int, float) and type(want) in (int, float)
                     if not (math.isclose(value, want, rel_tol=1e-12, abs_tol=1e-9) if numeric else equivalent(value, want)):
-                        mismatch = f'{get_column_letter(expected["col"])}{expected["row"]}'
+                        mismatch = f'«{expected["sheet"]}», {get_column_letter(expected["col"])}{expected["row"]}'
                         break
                 if mismatch is None:
                     break
                 if attempt == 2:
-                    raise AppError(f'Ошибка пересчёта Гаража: «{TARGET}», {mismatch}. Копия сохранена.')
+                    raise AppError(f'Ошибка пересчёта Гаража: {mismatch}. Копия сохранена.')
                 time.sleep(2)
-                result = self.snapshot(extra=plan['after'])
+                result = self.snapshot(only=scope) if scope is not None else self.snapshot(extra=plan['after'])
+        if plan.get('garage_checks'):
+            from .garage_repairs import verify_garage_repairs
+            verify_garage_repairs(result,plan)
+        if plan.get('backup_highlights')==1 and plan.get('sheet_backups'):
+            self.highlight_backups(plan,result,copies)
+
+    def highlight_backups(self,plan,result,copies):
+        from .sheet_backups import highlight_ranges,highlight_rule,verify_highlight_rule
+        requests=[];expected={};count=0
+        for item in plan['sheet_backups']:
+            areas=highlight_ranges(plan,item['source'],result)
+            if not areas:continue
+            expected[item['target']]=[]
+            count+=sum((a['endRowIndex']-a['startRowIndex'])*(a['endColumnIndex']-a['startColumnIndex']) for a in areas)
+            # Bound sparse regions too: one enormous conditional-format request
+            # cannot be split by the generic cell-write batching code.
+            for offset in range(0,len(areas),500):
+                rule=highlight_rule(areas[offset:offset+500],copies['sheets'][item['target']]['id'])
+                expected[item['target']].insert(0,rule)
+                requests.append({'addConditionalFormatRule':{'rule':rule,'index':0}})
+        if not requests:return
+        report=getattr(self,'report',lambda text:None)
+        report(f'Значения сверены. Выделяем изменённые ячейки в BF-копиях: {count}.')
+        # Formatting is limited to the newly created BF sheets. No live cells,
+        # original conditional rules, comments or frozen old values are rewritten.
+        for payload in write_batches(prepare_batches(requests)):
+            self.request('POST',':batchUpdate',data=payload,headers={'Content-Type':'application/json; charset=utf-8'},timeout=GOOGLE_WRITE_TIMEOUT)
+        meta=self.request('GET',params={'ranges':["'"+n.replace("'","''")+"'" for n in expected],
+                                       'fields':'sheets(properties(sheetId,title),conditionalFormats)'})
+        actual={s['properties']['title']:s.get('conditionalFormats',[]) for s in meta.get('sheets',[])}
+        for name,rules in expected.items():
+            for index,rule in enumerate(rules):
+                live=actual.get(name,[])
+                verify_highlight_rule(live[index] if index<len(live) else {},rule,name)
+        report('Подсветка BF-копий проверена; прежние значения сохранены.')
 
 
 def target(config, google_auth=None):

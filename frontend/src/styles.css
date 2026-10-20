@@ -196,3 +196,12 @@ html,body,#root{height:100%;min-height:0;overflow:hidden}
 #shoko-dark .sheet-backup-review{border:1px solid var(--sd-line);padding:16px 20px;margin:16px 0;border-radius:8px;font-size:13px;overflow-wrap:anywhere}
 #shoko-dark .sheet-backup-review p{margin:10px 0;line-height:1.6}
 @media(max-width:700px){#shoko-dark .launch-panel{padding:22px 18px;margin-top:30px}#shoko-dark .developer-section-head{align-items:flex-start;flex-direction:column}#shoko-dark .diagnostic-row{grid-template-columns:18px minmax(0,1fr);gap:8px}#shoko-dark .diagnostic-row>span:last-child{grid-column:2}#shoko-dark .google-error-title{flex-direction:column}#shoko-dark .google-errors dl>div{flex-direction:column;gap:2px;margin:10px 0}#shoko-dark .google-errors dd{text-align:left}#shoko-dark .space-row{grid-template-columns:minmax(0,1fr) auto;gap:6px}#shoko-dark .space-row small{grid-column:1;grid-row:2}#shoko-dark .space-row strong{grid-column:2;grid-row:1/span 2}#shoko-dark .sources-head{flex-wrap:wrap}}
+
+/* Multi-select operations retain the existing black and white interface. */
+#shoko-dark .operation-selection-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+#shoko-dark .operation-list { display: grid; margin-top: 4px; }
+#shoko-dark .operation-row { display: flex; align-items: center; gap: 16px; padding: 18px 0; width: 100%; border-bottom: 1px solid #333; color: #eee; font: inherit; cursor: pointer; }
+#shoko-dark .operation-row span { min-width: 0; }
+#shoko-dark .operation-row input { width: 18px; height: 18px; flex-shrink: 0; margin: 0; accent-color: #fff; }
+#shoko-dark .operation-row input:focus-visible { outline: 2px solid #eee; outline-offset: 3px; }
+#shoko-dark .operation-row:has(input:disabled) { opacity: .45; cursor: default; }

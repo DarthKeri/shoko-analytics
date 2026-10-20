@@ -19,31 +19,13 @@ from shoko.plans import load_plan, save_plan
 
 
 def fixtures(folder):
-    folder = Path(folder)
-    folder.mkdir(parents=True, exist_ok=True)
-    wb = Workbook(); ws = wb.active; ws.title = 'Кол_состав_08-26'
-    ws.cell(1, 13, 6); ws.cell(1, 22, 13); ws.cell(1, 31, 19)
-    ws.cell(2, 2, 'Volkswagen Polo Эконом')
-    ws.cell(3, 2, 2019); ws.cell(3, 3, 1200); ws.cell(3, 4, 1300)
-    for c in range(13, 39): ws.cell(3, c, c)
-    wb.save(folder / 'prostoi.xlsx'); wb.close()
-    wb = Workbook(); ws = wb.active; ws.title = '19'
-    ws.cell(1, 1, 'Год ПТС'); ws.cell(1, 2, 'Скидка/наценка'); ws.cell(1, 23, 'Автомобиль')
-    ws.cell(2, 1, 2019); ws.cell(2, 2, -100); ws.cell(2, 23, 'Volkswagen Polo №001')
-    wb.save(folder / 'drivers.xlsx'); wb.close()
-    wb = Workbook(); ws = wb.active; ws.title = TARGET
-    ws.append(['Класс', 'Модель', 'Год']); ws.append(['Эконом', 'Polo', 2019])
-    ws['D2'] = '=1+1'; ws['D2'].fill = PatternFill('solid', fgColor='ABCDEF')
-    ws['F2'] = 999; ws['G2'] = 888; ws['H2'] = 777
-    untouched = wb.create_sheet('Не изменять'); untouched['A1'] = '=2+3'
-    garage = wb.create_sheet('Гараж 20.08.2026')
-    garage.append(['Класс', 'Модель', 'Год выпуска'] + [''] * 12 + [f'Конкурент {i}' for i in range(1, 41)] + [''] * 6)
-    garage.append(['Эконом', 'Volkswagen Polo', 2019])
-    for address, expression in {'L2': '=AVERAGE(P2:AY2)', 'N2': '=COUNTA(P2:BC2)', 'BE2': '=MIN(P2:BC2)', 'BF2': '=AVERAGE(BE2;BG2)', 'BG2': '=AVERAGE(P2:BC2)', 'BH2': '=AVERAGE(BI2;BG2)', 'BI2': '=MAX(P2:BC2)'}.items():
-        garage[address] = expression
-    wb.save(folder / 'target.xlsx'); wb.close()
-    (folder / 'garage.csv').write_text('Марка и модель;Тариф;Год выпуска;Цена аренды 7 / 0;Тип топлива;КПП;Таксопарк\nVolkswagen Polo;эконом;2019;1500;бензин;автомат;Тестовый парк\n', encoding='utf-8')
-    return dict(prostoi=str(folder/'prostoi.xlsx'), drivers=str(folder/'drivers.xlsx'), csv=str(folder/'garage.csv'), target=str(folder/'target.xlsx'), target_mode='local', last_date='2026-08-20', test_copy_confirmed=True)
+    from shoko.samples import create_samples
+    paths = create_samples(folder)
+    wb = load_workbook(paths['target']); ws=wb[TARGET]
+    ws['D2']='=1+1'; ws['D2'].fill=PatternFill('solid', fgColor='ABCDEF')
+    untouched=wb.create_sheet('Не изменять'); untouched['A1']='=2+3'
+    wb.save(paths['target']); wb.close()
+    return paths
 
 
 class EngineTests(unittest.TestCase):
@@ -94,7 +76,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(wb[TARGET]['D2'].value,'=1+1')
         self.assertEqual(wb[TARGET]['D2'].fill.fgColor.rgb,'00ABCDEF')
         self.assertEqual(wb['Не изменять']['A1'].value,'=2+3')
-        self.assertEqual(set([PROSTOI,DRIVERS,TARGET,GARAGE])-set(wb.sheetnames),set())
+        self.assertEqual(set([TARGET,GARAGE])-set(wb.sheetnames),set())
         wb.close()
         with self.assertRaises(AppError): self.engine.write(plan['id'],plan['checksum'])
 
@@ -156,13 +138,13 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(file_hash(self.paths['target']),self.original)
 
     def test_bad_number_never_becomes_zero(self):
-        wb=load_workbook(self.paths['prostoi']);wb.active['D3']='oops';wb.save(self.paths['prostoi']);wb.close()
+        wb=load_workbook(self.paths['prices']);wb.active['C9']='oops';wb.save(self.paths['prices']);wb.close()
         self.engine.prepare('https://garage.example.test','2026-08-20',True);self.wait()
         self.assertIn('не является числом',self.engine.state['error'])
         self.assertEqual(file_hash(self.paths['target']),self.original)
 
     def test_formula_without_cache_blocks_calculated_input(self):
-        wb=load_workbook(self.paths['prostoi']);wb.active['D3']='=1+1';wb.save(self.paths['prostoi']);wb.close()
+        wb=load_workbook(self.paths['prices']);wb.active['C9']='=1+1';wb.save(self.paths['prices']);wb.close()
         self.engine.prepare('https://garage.example.test','2026-08-20',True);self.wait()
         self.assertEqual(self.engine.state['phase'],'error');self.assertIn('формулы',self.engine.state['error'])
 

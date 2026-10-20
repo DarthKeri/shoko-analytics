@@ -318,7 +318,7 @@ class ErrorAndEngineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             engine = Engine(folder)
             try:
-                engine.plan = {'id': 'reviewed-plan', 'checksum': 'checksum'}
+                engine.plan = {'changes':[{'sheet':'Fixture','row':1,'col':1,'after':1}], 'id': 'reviewed-plan', 'checksum': 'checksum'}
                 engine.state.update(phase='preview', plan_id='reviewed-plan')
                 engine.checks = {'target': {'ok': True}, 'prostoi': {'ok': True}, 'backup': {'ok': True}}
                 engine.google_auth_action('disconnect')
@@ -339,7 +339,7 @@ class ErrorAndEngineTests(unittest.TestCase):
                 engine.save_settings({'target_mode': 'google', 'target': source, 'test_copy_confirmed': True, 'google_oauth_client': str(path)})
                 saved = {'credentials': json.loads(credentials().to_json()), 'email': 'first@example.test', 'client_fingerprint': digest(client_config(str(path)))}
                 engine.google.save(saved)
-                plan = {'id': 'reviewed-plan', 'config_digest': engine.plan_config_digest(), 'google_identity': engine.google.identity(engine.config())}
+                plan = {'changes':[{'sheet':'Fixture','row':1,'col':1,'after':1}], 'id': 'reviewed-plan', 'config_digest': engine.plan_config_digest(), 'google_identity': engine.google.identity(engine.config())}
                 plan['checksum'] = digest(plan)
                 engine.plan = plan
                 engine.state['phase'] = 'preview'

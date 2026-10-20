@@ -9,7 +9,10 @@ from .calculation import TARGET, cell, set_cell
 
 DATED = re.compile(r'^Гараж (\d{2}\.\d{2}\.\d{4})$')
 LINK = re.compile(r"^='(Гараж \d{2}\.\d{2}\.\d{4})'!\$?([A-Z]+)\$?(\d+)$", re.I)
-GUARDED_LINK = re.compile(r'''^=IF\(COUNT\('(Гараж \d{2}\.\d{2}\.\d{4})'!P(\d+):BC\2\)=0;"";'\1'!([A-Z]+)\2\)$''', re.I)
+GUARDED_LINK = re.compile(r'''^=IF\(COUNT\('(Гараж \d{2}\.\d{2}\.\d{4})'!P(\d+):BC\2\)=0;(?:""|"-");'\1'!([A-Z]+)\2\)$''', re.I)
+EMPTY_LINK = re.compile(r"""^=IF\(\s*('Гараж \d{2}\.\d{2}\.\d{4}'!\$?[A-Z]+\$?\d+)\s*=\s*""\s*[;,]\s*"([^"]{0,100})"\s*[;,]\s*\1\s*\)$""", re.I)
+ERROR_LINK = re.compile(r"""^=IFERROR\(\s*('Гараж \d{2}\.\d{2}\.\d{4}'!\$?[A-Z]+\$?\d+)\s*[;,]\s*"([^"]{0,100})"\s*\)$""", re.I)
+ERROR_VALUES = {'#DIV/0!', '#N/A', '#REF!', '#VALUE!', '#NUM!', '#NAME?', '#NULL!', '#ERROR!'}
 SUMMARY = {10: 'N', 11: 'BE', 12: 'BF', 13: 'L', 14: 'BH', 15: 'BI'}
 REQUIRED = ('Марка и модель', 'Тариф', 'Год выпуска', 'Цена аренды 7 / 0', 'Тип топлива', 'КПП', 'Таксопарк')
 BRANDS = {'volkswagen', 'skoda', 'kia', 'nissan', 'toyota', 'hyundai', 'chery', 'cherry', 'geely', 'haval', 'jac', 'faw'}
@@ -159,13 +162,30 @@ def _number(value, address):
     raise AppError(f'Гараж, {address}: для проверки формулы ожидалось число.')
 
 
-def summary_value(rows, row, col, visiting=None):
+def summary_value(rows, row, col, visiting=None, native=False, expression=None):
     """Evaluate only the existing summary formula grammar, never execute code."""
     address = f'{get_column_letter(col)}{row + 1}'
     value = cell(rows[row], col - 1)
     text = formula_text(value)
+    if expression is not None:
+        text, value = expression, formula(expression)
     if not isinstance(value, dict):
+        if native and isinstance(text, str) and text in ERROR_VALUES:
+            return text
         return _number(text, address)
+    if native:
+        guarded_market = re.fullmatch(r'=IF\(COUNT\(P(\d+):([A-Z]+)\1\)=0;"-";(.*)\)', text, re.I|re.S)
+        if guarded_market and int(guarded_market[1])==row+1:
+            end=column_index_from_string(guarded_market[2])
+            if not 16<=end<=55:raise AppError('Неожиданный диапазон проверки рынка.')
+            if not any(type(cell(rows[row],c)) in (int,float) for c in range(15,end)):
+                return '-'
+            return summary_value(rows,row,col,visiting,native=True,expression='='+guarded_market[3])
+    if native:
+        guarded = re.fullmatch(r'=IFERROR\((.+)[;,]"(-|)"\)', text.upper().replace(' ', '').replace('$', ''))
+        if guarded:
+            computed = summary_value(rows, row, col, visiting, native=True, expression='=' + guarded[1])
+            return guarded[2] if isinstance(computed, str) and computed in ERROR_VALUES else computed
     visiting = set() if visiting is None else set(visiting)
     if col in visiting:
         raise AppError(f'Циклическая формула Гаража: {address}.')
@@ -181,17 +201,19 @@ def summary_value(rows, row, col, visiting=None):
             return sum(v not in ('', None) for v in values)
         numbers = [_number(v, address) for v in values if v not in ('', None)]
         if not numbers:
-            return None  # no offers: dependent proposal cells are explicitly blanked
+            return (0 if match[1] in ('MIN', 'MAX') else '#DIV/0!') if native else None
         return {'MIN': min, 'MAX': max, 'AVERAGE': lambda v: math.fsum(v) / len(v)}[match[1]](numbers)
     match = re.fullmatch(r'=AVERAGE\(([A-Z]+)(\d+)[;,]([A-Z]+)(\d+)\)', text)
     if match and int(match[2]) == row + 1 == int(match[4]):
-        values = [summary_value(rows, row, column_index_from_string(match[i]), visiting) for i in (1, 3)]
+        values = [summary_value(rows, row, column_index_from_string(match[i]), visiting, native=native) for i in (1, 3)]
+        if native and any(isinstance(v, str) and v in ERROR_VALUES for v in values):
+            return next(v for v in values if isinstance(v, str) and v in ERROR_VALUES)
         numbers = [v for v in values if v is not None]
-        return math.fsum(numbers) / len(numbers) if numbers else None
+        return math.fsum(numbers) / len(numbers) if numbers else ('#DIV/0!' if native else None)
     raise AppError(f'Неподдерживаемая формула Гаража: {address}. Обновление заблокировано.')
 
 
-def prepare_garage(before, after, csv_rows, processing):
+def prepare_garage(before, after, csv_rows, processing, update_links=True, archive_source=None):
     names = [s['properties']['title'] for s in before.get('metadata', {}).get('sheets', [])] or list(before['sheets'])
     source_name = latest_garage(names)
     if not source_name or source_name not in before['sheets']:
@@ -218,14 +240,18 @@ def prepare_garage(before, after, csv_rows, processing):
     operations = []
     if work_name != source_name:
         archive = _unique_archive(source_name, names)
-        frozen = copy.deepcopy(source['values'])
+        frozen = copy.deepcopy((archive_source or source)['values'])
         if before['mode'] == 'local' and any(isinstance(v, str) and v.startswith('=') and cell(frozen[r] if r < len(frozen) else [], c) == '' for r, row in enumerate(raw) for c, v in enumerate(row)):
             raise AppError('В локальном Гараже нет сохранённых результатов формул для архива. Пересчитайте копию в Excel или используйте Google-таблицу.')
         after[archive] = frozen
         operations = [dict(kind='archive', source=source_name, target=archive), dict(kind='rename', source=source_name, target=work_name)]
     after[work_name] = rows
     links, expected = 0, []
+    empty_links = 0
+    skipped_links, preserved = [], []
     target_raw = before['sheets'][TARGET].get('raw', before['sheets'][TARGET]['values'])
+    target_formula_cells = before['sheets'][TARGET].get('formula_cells')
+    target_formula_cells = set(map(tuple, target_formula_cells)) if target_formula_cells is not None else None
     for r, old_row in enumerate(before['sheets'][TARGET]['values'][1:], 1):
         key = car_key(old_row)
         if not key:
@@ -233,33 +259,79 @@ def prepare_garage(before, after, csv_rows, processing):
         mapped = cars.get(key)
         for col, source_col in SUMMARY.items():
             old = cell(target_raw[r] if r < len(target_raw) else [], col - 1)
+            address = f'{get_column_letter(col)}{r + 1}'
+            if not update_links:
+                # We do not own J:O. Verify preserved entries, not guessed results.
+                is_formula = isinstance(old, str) and old.startswith('=') and (target_formula_cells is None or (r, col - 1) in target_formula_cells)
+                value = old.replace(f"'{source_name}'!", f"'{work_name}'!") if is_formula else old
+                preserved.append(dict(sheet=TARGET, row=r + 1, col=col, value=value))
+            def skip_dash(reason):
+                skipped_links.append(dict(cell=address, reason=reason))
+            if not update_links and isinstance(old, str) and (old.strip() == '-' or re.fullmatch(r'=\s*"-"\s*', old)):
+                skip_dash('прочерк')
+                continue
             link = LINK.fullmatch(old) if isinstance(old, str) else None
             guarded = GUARDED_LINK.fullmatch(old) if isinstance(old, str) else None
+            empty_wrapper = EMPTY_LINK.fullmatch(old) if isinstance(old, str) else None
+            error_wrapper = ERROR_LINK.fullmatch(old) if isinstance(old, str) else None
+            dash_logic = not update_links and (
+                (isinstance(old, str) and old.startswith('=') and re.search(r'"\s*-\s*"', old))
+                or cell(old_row, col - 1) == '-')
+            if not update_links and (empty_wrapper or error_wrapper):
+                link = LINK.fullmatch('=' + (empty_wrapper or error_wrapper)[1])
             if guarded:
                 link = LINK.fullmatch(f"='{guarded[1]}'!{guarded[3]}{guarded[2]}")
             if link:
                 allowed_columns = {10: {'N'}, 11: {'BE', 'J'}, 12: {'BF'}, 13: {'L', 'BG'}, 14: {'BH'}, 15: {'BI'}}
                 if link[1] != source_name or link[2].upper() not in allowed_columns[col]:
+                    if dash_logic:
+                        skip_dash('собственная формула с прочерком; другая ссылка или показатель')
+                        continue
                     raise AppError(f'Предложение цен, {get_column_letter(col)}{r + 1}: ссылка на другой Гараж или показатель. Проверьте шаблон.')
                 source_col = link[2].upper()
                 source_row = int(link[3]) - 1
                 # Preserve explicitly mapped variant rows only when model/year agree.
                 linked_key = car_key(source['values'][source_row]) if 0 < source_row < len(source['values']) else None
                 if not linked_key or linked_key[1:] != key[1:]:
+                    if dash_logic:
+                        skip_dash('собственная формула с прочерком; другое сопоставление модели')
+                        continue
                     raise AppError(f'Предложение цен, {get_column_letter(col)}{r + 1}: модель/год не совпадают со ссылкой Гаража.')
+            elif not update_links and old in ('', None):
+                empty_links += 1
+                continue  # Original importer leaves empty J:O cells untouched.
+            elif not update_links:
+                if dash_logic:
+                    skip_dash('собственная формула, показывающая прочерк')
+                    continue
+                raise AppError(f'Предложение цен, {get_column_letter(col)}{r + 1}: неподдерживаемая формула или значение в J:O. Проверьте формулу связи с листом «{source_name}» внутри этой таблицы. Адрес сайта вводить не нужно; приложение не переписывает J:O.')
             elif mapped is not None:
                 source_row = mapped
             else:
                 continue
             count = sum(cell(rows[source_row], c) not in ('', None) for c in comp)
-            value = summary_value(rows, source_row, column_index_from_string(source_col)) if count else (0 if col == 10 else None)
+            if not update_links:
+                try:
+                    value = ('-' if ';"-";' in old else None) if guarded and not count else summary_value(rows, source_row, column_index_from_string(source_col), native=True)
+                except AppError:
+                    if not dash_logic:
+                        raise
+                    skip_dash('собственная формула с прочерком; результат не вычисляется приложением')
+                    continue
+                if empty_wrapper and value in ('', None):
+                    value = empty_wrapper[2]
+                if error_wrapper and isinstance(value, str) and value in ERROR_VALUES:
+                    value = error_wrapper[2]
+            else:
+                value = summary_value(rows, source_row, column_index_from_string(source_col)) if count else (0 if col == 10 else None)
             # IFERROR makes no-offer rows blank, while count remains numeric zero.
             reference = f"'{work_name}'!{source_col}{source_row + 1}"
             expression = '=' + reference if col == 10 else f'=IF(COUNT(\'{work_name}\'!P{source_row + 1}:BC{source_row + 1})=0;"";{reference})'
-            set_cell(after[TARGET], r, col - 1, formula(expression))
+            if update_links:
+                set_cell(after[TARGET], r, col - 1, formula(expression))
             expected.append(dict(sheet=TARGET, row=r + 1, col=col, value='' if value is None else value))
             links += 1
-    if not links:
+    if not links and update_links:
         raise AppError('Не удалось связать Гараж с J:O листа «Предложение цен». Обновление заблокировано.')
     archived_errors = sum(isinstance(v, str) and v.startswith(('#DIV/0!', '#N/A', '#REF!', '#VALUE!', '#NUM!', '#NAME?', '#NULL!', '#ERROR!')) for row in source['values'] for v in row) if operations else 0
-    return dict(operations=operations, garage=dict(sheet=work_name, csv_rows=len(csv_rows) - 1, eligible=matches['eligible'], matched=matched, cleared=cleared, ignored=skipped, links=links, archived_errors=archived_errors), derived=expected)
+    return dict(operations=operations, garage=dict(sheet=work_name, csv_rows=len(csv_rows) - 1, eligible=matches['eligible'], matched=matched, cleared=cleared, ignored=skipped, links=links, empty_links=empty_links, skipped_links=skipped_links, archived_errors=archived_errors), derived=expected, preserved=preserved)

@@ -81,24 +81,24 @@ class SettingsTests(unittest.TestCase):
 
     def test_checks_keep_other_results_when_next_source_is_saved(self):
         paths = fixtures(Path(self.temp.name) / 'files')
-        self.engine.save_settings({'prostoi': paths['prostoi'], 'last_date': paths['last_date']})
-        self.engine.check('prostoi', paths['last_date']); self.wait()
-        self.assertTrue(self.engine.checks['prostoi']['ok'])
+        self.engine.save_settings({'prices': paths['prices'], 'last_date': paths['last_date']})
+        self.engine.check('prices', paths['last_date']); self.wait()
+        self.assertTrue(self.engine.checks['prices']['ok'])
         self.engine.save_settings({'drivers': paths['drivers']})
         self.engine.check('drivers', paths['last_date']); self.wait()
-        self.assertTrue(self.engine.checks['prostoi']['ok'])
+        self.assertTrue(self.engine.checks['prices']['ok'])
         self.assertTrue(self.engine.checks['drivers']['ok'])
-        self.engine.save_settings({'prostoi': 'missing.xlsx'})
-        self.assertNotIn('prostoi', self.engine.checks)
+        self.engine.save_settings({'prices': 'missing.xlsx'})
+        self.assertNotIn('prices', self.engine.checks)
         self.assertTrue(self.engine.checks['drivers']['ok'])
 
     def test_failed_check_can_be_fixed_and_retried(self):
         paths = fixtures(Path(self.temp.name) / 'files')
-        self.engine.check('prostoi', paths['last_date']); self.wait()
-        self.assertFalse(self.engine.checks['prostoi']['ok'])
-        self.engine.save_settings({'prostoi': paths['prostoi']})
-        self.engine.check('prostoi', paths['last_date']); self.wait()
-        self.assertTrue(self.engine.checks['prostoi']['ok'])
+        self.engine.check('prices', paths['last_date']); self.wait()
+        self.assertFalse(self.engine.checks['prices']['ok'])
+        self.engine.save_settings({'prices': paths['prices']})
+        self.engine.check('prices', paths['last_date']); self.wait()
+        self.assertTrue(self.engine.checks['prices']['ok'])
         self.assertEqual(self.engine.state['error'], '')
 
     def test_old_settings_copies_are_hidden_but_excel_backups_remain(self):
@@ -139,9 +139,9 @@ class SettingsTests(unittest.TestCase):
     def test_incomplete_all_status_checks_return_each_result_without_write(self):
         paths = fixtures(Path(self.temp.name) / 'files')
         before = file_hash(paths['target'])
-        self.engine.save_settings({'prostoi': paths['prostoi'], 'last_date': paths['last_date']})
+        self.engine.save_settings({'prices': paths['prices'], 'last_date': paths['last_date']})
         self.engine.check('all', paths['last_date']); self.wait()
-        self.assertTrue(self.engine.checks['prostoi']['ok'])
+        self.assertTrue(self.engine.checks['prices']['ok'])
         self.assertFalse(self.engine.checks['drivers']['ok'])
         self.assertFalse(self.engine.checks['csv']['ok'])
         self.assertEqual(file_hash(paths['target']), before)

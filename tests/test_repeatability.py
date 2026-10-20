@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 from openpyxl import load_workbook
 from shoko.adapters import equivalent, changes_for
-from shoko.calculation import assemble_prostoi, format_source, PROSTOI
+from shoko.calculation import TARGET, assemble_prostoi, format_source, PROSTOI
 from shoko.engine import Engine
 from shoko.storage import AppError, file_hash
 from test_mvp import fixtures
@@ -117,7 +117,8 @@ class RepeatabilityTests(unittest.TestCase):
                 if engine.worker:
                     engine.worker.join(20)
                 self.assertEqual(engine.state['phase'], 'preview', engine.state['error'])
-                self.assertEqual(engine.plan['after'][PROSTOI][2][39], '12.5%')
+                self.assertNotIn(PROSTOI, engine.plan['after'])
+                self.assertIsInstance(engine.plan['after'][TARGET][1][21], float)
                 plan = engine.plan
                 engine.write(plan['id'], plan['checksum'])
                 if engine.worker:

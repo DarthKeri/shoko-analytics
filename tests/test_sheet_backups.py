@@ -69,6 +69,36 @@ class SheetBackupTests(unittest.TestCase):
         self.assertFalse(any(r.get('updateSheetProperties',{}).get('properties',{}).get('title','').startswith('BF_') for r in requests))
         self.assertFalse(any('deleteSheet' in r for r in requests))
 
+    def test_google_copy_indices_follow_sequential_insertions_and_renames(self):
+        plan = plan_for()
+        # Actual order comes from properties.index, not metadata response order.
+        meta = plan['before']['metadata']['sheets']
+        meta[0]['properties']['index'] = 1
+        meta[1]['properties']['index'] = 2
+        meta.append({'properties': {'sheetId': 100, 'title': 'Cover', 'index': 0}})
+        plan['sheet_backups'] = planned_backups(plan['before'], plan['changes'], plan['operations'])
+        adapter = object.__new__(GoogleTarget)
+        requests = json.loads(adapter.prepare_write(plan))['requests']
+        order = [(100, 'Cover'), (7, 'Гараж 25.08.2026'), (9, TARGET)]
+        copied = []
+        for request in requests:
+            if 'duplicateSheet' in request:
+                item = request['duplicateSheet']
+                source_index = next(i for i, row in enumerate(order) if row[0] == item['sourceSheetId'])
+                self.assertEqual(item['insertSheetIndex'], source_index + 1)
+                copied.append((item['sourceSheetId'], item['newSheetId']))
+                order.insert(item['insertSheetIndex'], (item['newSheetId'], item['newSheetName']))
+            elif 'updateSheetProperties' in request:
+                props = request['updateSheetProperties']['properties']
+                if 'title' in props:
+                    index = next(i for i, row in enumerate(order) if row[0] == props['sheetId'])
+                    order[index] = (props['sheetId'], props['title'])
+        self.assertEqual(order[0], (100, 'Cover'))
+        for source, duplicate in copied:
+            start = next(i for i, row in enumerate(order) if row[0] == source)
+            stop = next((i for i in range(start + 1, len(order)) if order[i][0] in (7, 9, 100)), len(order))
+            self.assertIn(duplicate, [row[0] for row in order[start + 1:stop]])
+
     def test_google_freezes_formulas_but_not_literal_formula_like_text(self):
         source={'raw':[['=1+1','=literal','=IF(1;"";2)']], 'values':[[2,'=literal','']], 'formula_cells':[[0,0],[0,2]]}
         self.assertEqual(backup_matrix(source,'google'),[[2,'=literal','']])
@@ -102,6 +132,9 @@ class SheetBackupTests(unittest.TestCase):
                 try:
                     backup=wb['BF_'+TARGET];self.assertEqual(backup['F2'].value,999);self.assertEqual(backup['D2'].value,'=1+1')
                     self.assertEqual(backup['D2'].fill.fgColor.rgb,'00ABCDEF');self.assertEqual(backup['F2'].comment.text,'Fixture note')
+                    self.assertEqual(backup['F2'].fill.fgColor.rgb,'00FFF2CC')
+                    self.assertNotEqual(wb[TARGET]['F2'].fill.fgColor.rgb,'00FFF2CC')
+                    self.assertEqual(wb.sheetnames.index('BF_'+TARGET), wb.sheetnames.index(TARGET)+1)
                     self.assertEqual(wb[TARGET]['F2'].value,1300);self.assertEqual(wb['Не изменять']['A1'].value,'=2+3')
                 finally:wb.close()
                 engine.prepare('',paths['last_date']);engine.worker.join(20)

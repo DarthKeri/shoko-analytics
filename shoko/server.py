@@ -114,7 +114,7 @@ class Server:
         if action == 'check':
             return engine.check(body.get('source', 'all'), body.get('date', ''))
         if action == 'prepare':
-            return engine.prepare(body.get('url', ''), body.get('date', ''), bool(body.get('csv_confirmed')))
+            return engine.prepare(body.get('url', ''), body.get('date', ''), bool(body.get('csv_confirmed')), body.get('operation', 'all'), body.get('selected_operations'))
         if action == 'write':
             return engine.write(body.get('id'), body.get('checksum'))
         if action == 'cancel':
