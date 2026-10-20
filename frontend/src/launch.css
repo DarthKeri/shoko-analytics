@@ -1,0 +1,59 @@
+/* Approved wide launch screen, shared by both existing dark appearances. */
+#shoko-dark .sd-shell{grid-template-columns:180px minmax(0,1fr)}
+#shoko-dark main{padding:20px 26px 24px}
+#shoko-dark main>.sd-route-controls{margin-bottom:12px;gap:8px}
+#shoko-dark .sd-route-button{width:27px;height:24px;border-radius:4px}
+#shoko-dark .sd-brand{padding:0 4px 22px;gap:9px;font-weight:500;font-size:17px}
+#shoko-dark aside{padding:24px 14px 18px}
+#shoko-dark .sd-nav{padding:11px 9px;gap:9px;font-size:12px;font-weight:500}
+#shoko-dark .sd-nav[aria-current=page]{background:var(--sd-selected);font-weight:500}
+#shoko-dark .sd-logo-frame{width:55px;height:24px}
+#shoko-dark .sd-logo{left:-106.2px;top:-8.4px}
+#shoko-dark .sd-brand-sub{font-size:11px}
+#shoko-dark [data-screen=update] h2{font-size:25px;font-weight:500;letter-spacing:-.7px;margin:0}
+#shoko-dark [data-screen=update]>.sd-head{margin-bottom:20px}
+#shoko-dark [data-screen=update]>[role=tablist]{margin:0 0 10px;border:1px solid var(--sd-line);padding:4px;gap:4px;border-radius:7px;background:transparent}
+#shoko-dark [data-screen=update]>[role=tablist] button{font-size:14px;font-weight:400;min-height:36px;padding:8px;border-radius:4px}
+#shoko-dark [data-screen=update]>[role=tablist] button[aria-selected=true]{background:var(--sd-selected);border-radius:4px;font-weight:500}
+#shoko-dark [data-screen=update]>.update-errors{margin:0 0 24px;padding:0}
+#shoko-dark [data-screen=update] .sd-problems{min-height:62px;border:1px solid #656565;border-radius:7px;background:var(--sd-input);padding:10px 14px;margin:0}
+#shoko-dark [data-screen=update] .sd-error-heading{font-size:13px;font-weight:500;margin:0 0 2px}
+#shoko-dark [data-screen=update] .problem-text{font-size:12px;line-height:1.5;color:var(--sd-text)}
+#shoko-dark .launch-panel{max-width:none;width:100%;margin:0;padding:20px 0 0;border:0;border-top:1px solid var(--sd-line);border-radius:0;background:transparent;display:flex;justify-content:space-between;gap:22px;align-items:flex-end}
+#shoko-dark .launch-panel label{max-width:210px;font-size:12px;font-weight:400;color:var(--sd-muted)}
+#shoko-dark .launch-panel input[type=date]{height:44px;font-size:14px;min-width:177px;color:var(--sd-text)}
+#shoko-dark .launch-actions{margin:0;gap:20px}
+#shoko-dark .launch-actions .sd-button{padding:11px 0;font-size:13px;min-height:42px}
+#shoko-dark .launch-actions .sd-primary{padding:11px 21px}
+#shoko-dark .launch-progress{width:100%;max-width:none;margin:18px 0 0}
+#shoko-dark .activity-chart{min-width:0;margin-bottom:auto;padding-bottom:14px}
+#shoko-dark .activity-chart-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:10px}
+#shoko-dark .activity-chart h3{font-size:16px;font-weight:500;letter-spacing:-.3px;margin:0 0 4px}
+#shoko-dark .activity-chart-head p{color:var(--sd-muted);font-size:12px;margin:0}
+#shoko-dark .activity-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--sd-muted);margin-top:10px}
+#shoko-dark .activity-legend span{display:flex;align-items:center;gap:6px}
+#shoko-dark .activity-legend i{width:16px;height:2px;background:var(--sd-text);display:block}
+#shoko-dark .activity-legend .legend-launches{background:repeating-linear-gradient(to right,#888 0 4px,transparent 4px 6px)}
+#shoko-dark .legend-bars .legend-launches{background:#888}
+#shoko-dark .chart-switch{display:flex;gap:3px;border:1px solid var(--sd-line);border-radius:6px;padding:3px;flex-shrink:0}
+#shoko-dark .chart-switch button{display:flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--sd-muted);padding:6px 9px;border-radius:3px;font-size:12px;white-space:nowrap}
+#shoko-dark .chart-switch button[aria-pressed=true]{background:var(--sd-selected);color:var(--sd-text)}
+#shoko-dark .chart-switch svg{width:15px;height:15px}
+#shoko-dark .activity-plot{width:100%;height:220px;min-width:0}
+#shoko-dark .activity-plot svg{width:100%;height:100%;display:block;overflow:visible}
+#shoko-dark .activity-grid{stroke:var(--sd-line);stroke-width:.7}
+#shoko-dark .activity-unit,#shoko-dark .activity-tick{fill:var(--sd-muted);font-size:11px;font-family:inherit}
+#shoko-dark .activity-area{fill:var(--sd-text);opacity:.045}
+#shoko-dark .activity-launch-line{stroke:#888;stroke-width:1.5;stroke-dasharray:4 4;fill:none}
+#shoko-dark .activity-update-line{stroke:var(--sd-text);stroke-width:2;fill:none}
+#shoko-dark .activity-point,#shoko-dark .activity-update-bar{fill:var(--sd-text)}
+#shoko-dark .activity-launch-bar{fill:#888}
+#shoko-dark .activity-guide{stroke:var(--sd-muted);stroke-width:1;opacity:.65}
+#shoko-dark .activity-chart .activity-detail{font-size:12px;color:var(--sd-muted);text-align:right;margin:2px 0 0;min-height:20px;font-variant-numeric:tabular-nums}
+#shoko-dark .activity-chart .activity-warning{font-size:12px;color:var(--sd-muted);margin:8px 0 0;overflow-wrap:anywhere}
+#shoko-dark[data-appearance=apple] [data-screen=update]{max-width:none}
+#shoko-dark[data-appearance=apple] [data-screen=update] .sd-problems{margin:0;min-height:62px}
+@media(max-width:1000px){#shoko-dark .sd-shell{grid-template-columns:165px minmax(0,1fr)}#shoko-dark main{padding-left:24px;padding-right:24px}}
+@media(max-width:740px){#shoko-dark .activity-chart-head{flex-wrap:wrap}#shoko-dark .chart-switch{margin-left:auto}#shoko-dark .launch-panel{flex-wrap:wrap}#shoko-dark .launch-actions{margin-left:auto}}
+@media(max-width:600px){#shoko-dark .sd-shell{grid-template-columns:1fr}#shoko-dark aside{padding:12px 10px}#shoko-dark main{padding:16px}#shoko-dark .sd-brand{width:100%;padding:0 6px 6px}#shoko-dark .sd-nav{padding:7px;font-size:11px}#shoko-dark .launch-panel{display:block}#shoko-dark .launch-panel label{max-width:none}#shoko-dark .launch-actions{justify-content:space-between;margin-top:16px;gap:8px}#shoko-dark .activity-chart .activity-detail{text-align:left}}
+@media(pointer:coarse){#shoko-dark .chart-switch button{min-height:44px}}

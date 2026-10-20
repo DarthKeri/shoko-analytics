@@ -1,5 +1,7 @@
 # Secrets and local state
 credentials*.json
+client_secret*.json
+google_oauth*.json
 *credentials*.json
 .env
 .env.*
@@ -34,3 +36,17 @@ dist/
 *.exe
 *.dll
 node_modules/
+/web/
+*.lnk
+*.vault
+/inputs/
+/plans/
+/sessions/
+/output/
+/instance.lock
+/smoke-ok.txt
+/ui-smoke.json
+workspace.location.json
+
+# Private per-build Desktop OAuth configuration
+**/oauth-desktop.json
