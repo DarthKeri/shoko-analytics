@@ -44,6 +44,16 @@ def include_oauth_client(app, path):
     destination.write_text(json.dumps(configuration, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
+def copy_public_assets(source, destination):
+    # Local ignored OAuth files must never enter an unconfigured public build.
+    # Desktop OAuth is added only by the explicit include_oauth_client input.
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in ('shoko.ico', 'launcher.manifest', 'windows-version.txt'):
+        path = source / name
+        if path.is_file():
+            shutil.copy2(path, destination / name)
+
+
 def assemble(args):
     candidate = inside(args.output, ROOT / 'build')
     if candidate.exists():
@@ -72,15 +82,19 @@ def assemble(args):
     (runtime / 'python313._pth').write_text('python313.zip\n.\nLib\nLib/site-packages\n../app\nimport site\n', encoding='ascii')
     app = candidate / 'app'
     app.mkdir()
-    shutil.copy2(ROOT / 'main.py', app / 'main.py')
+    for name in ('main.py', 'bootstrap.py', 'startup_diagnostics.py'):
+        shutil.copy2(ROOT / name, app / name)
+    shutil.copy2(ROOT / 'tools' / 'Проверить запуск.cmd', candidate / 'Проверить запуск.cmd')
     (app / 'shoko').mkdir()
     for source in (ROOT / 'shoko').glob('*.py'):
         shutil.copy2(source, app / 'shoko' / source.name)
-    for folder in ('web', 'assets'):
-        shutil.copytree(ROOT / folder, app / folder)
+    shutil.copytree(ROOT / 'web', app / 'web')
+    copy_public_assets(ROOT / 'assets', app / 'assets')
     include_oauth_client(app, getattr(args, 'oauth_client', None))
     shutil.copy2(args.launcher, candidate / 'ShokoAnalytics.exe')
     shutil.copy2(ROOT / 'requirements-runtime.txt', candidate / 'requirements-runtime.txt')
+    shutil.copy2(ROOT / 'tools/README-FIRST.txt', candidate / 'README-FIRST.txt')
+    shutil.copy2(ROOT / 'docs/USER_GUIDE_RU.pdf', candidate / 'Shokolad_User_Guide_RU.pdf')
     forbidden = {'.vault', '.xlsx', '.xls', '.csv', '.session'}
     files = sorted(p for p in candidate.rglob('*') if p.is_file())
     for path in files:
@@ -98,7 +112,7 @@ def verify(candidate):
     manifest = json.loads((candidate / 'build-manifest.json').read_text(encoding='utf-8'))
     if manifest.get('version') != VERSION or manifest.get('format') != 'python-folder':
         raise ValueError('Unexpected distribution manifest')
-    required = {'ShokoAnalytics.exe', 'runtime/python.exe', 'runtime/pythonw.exe', 'runtime/python313.dll', 'app/main.py', 'app/shoko/__init__.py'}
+    required = {'ShokoAnalytics.exe', 'runtime/python.exe', 'runtime/pythonw.exe', 'runtime/python313.dll', 'app/main.py', 'app/bootstrap.py', 'app/startup_diagnostics.py', 'Проверить запуск.cmd', 'app/shoko/__init__.py'}
     if not required.issubset(manifest['files']):
         raise ValueError('Required application files missing from manifest')
     actual = {p.relative_to(candidate).as_posix() for p in candidate.rglob('*') if p.is_file() and p.name != 'build-manifest.json'}

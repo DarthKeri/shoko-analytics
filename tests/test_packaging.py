@@ -19,7 +19,7 @@ class PackagingTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.candidate = self.root / 'build/candidate'
         self.candidate.mkdir(parents=True)
-        self.files = ['ShokoAnalytics.exe', 'runtime/python.exe', 'runtime/pythonw.exe', 'runtime/python313.dll', 'app/main.py', 'app/shoko/__init__.py']
+        self.files = ['ShokoAnalytics.exe', 'runtime/python.exe', 'runtime/pythonw.exe', 'runtime/python313.dll', 'app/main.py', 'app/bootstrap.py', 'app/startup_diagnostics.py', 'Проверить запуск.cmd', 'app/shoko/__init__.py']
         for name in self.files:
             path = self.candidate / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -35,6 +35,15 @@ class PackagingTests(unittest.TestCase):
 
     def save_manifest(self):
         (self.candidate / 'build-manifest.json').write_text(json.dumps(self.manifest), encoding='utf-8')
+
+    def test_public_assets_never_copy_ignored_local_oauth_or_credentials(self):
+        source = self.root / 'private-assets'
+        source.mkdir()
+        for name in ('shoko.ico', 'launcher.manifest', 'windows-version.txt', 'oauth-desktop.json', 'credentials.json', 'unexpected-private.json'):
+            (source / name).write_text('synthetic ' + name)
+        destination = self.root / 'public-assets'
+        package.copy_public_assets(source, destination)
+        self.assertEqual({p.name for p in destination.iterdir()}, {'shoko.ico', 'launcher.manifest', 'windows-version.txt'})
 
     def test_verified_distribution_requires_all_recorded_files(self):
         self.assertEqual(package.verify(self.candidate)['version'], '0.1.0')
