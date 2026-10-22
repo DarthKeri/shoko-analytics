@@ -71,7 +71,7 @@ def _close_native_log():
 
 def initialize():
     global _native_log
-    stage('Bootstrap: Python ' + sys.version.replace('\n', ' ') + '; ' + platform.platform())
+    stage('Запуск встроенного Python ' + sys.version.replace('\n', ' ') + '; ' + platform.platform())
     path = os.environ.get('SHOKO_STARTUP_DETAILS')
     if path and _native_log is None:
         try:
@@ -80,6 +80,10 @@ def initialize():
             atexit.register(_close_native_log)
         except (OSError, RuntimeError):
             _close_native_log()
+
+def result_text(value):
+    return 'успешно' if value is True else 'ошибка' if value is False else 'не выполнялась'
+
 
 def out(message=''):
     print(sanitize(message), flush=True)
@@ -96,19 +100,19 @@ def probe(root, kind, data_dir):
         return 1
     expected = Path(data_dir) / ('smoke-ok.txt' if kind == 'backend' else 'ui-smoke.json')
     if not expected.exists():
-        out('ERROR: diagnostic completion marker was not created.')
+        out('ОШИБКА: проверка не подтвердила успешное завершение запуска.')
         return 1
-    out('OK: ' + kind + ' startup completed.')
+    out('УСПЕШНО: ' + {'backend':'ядро приложения','gui':'окно приложения'}[kind] + ' запущено.')
     return 0
 
 def registry_versions():
     if os.name != 'nt':
         return
     import winreg
-    for hive, label in [(winreg.HKEY_LOCAL_MACHINE, 'machine'),
-                        (winreg.HKEY_CURRENT_USER, 'user')]:
-        for flag, view in [(winreg.KEY_WOW64_32KEY, '32-bit'),
-                           (winreg.KEY_WOW64_64KEY, '64-bit')]:
+    for hive, label in [(winreg.HKEY_LOCAL_MACHINE, 'компьютер'),
+                        (winreg.HKEY_CURRENT_USER, 'пользователь')]:
+        for flag, view in [(winreg.KEY_WOW64_32KEY, '32-разрядный реестр'),
+                           (winreg.KEY_WOW64_64KEY, '64-разрядный реестр')]:
             try:
                 with winreg.OpenKey(hive, r'SOFTWARE\Microsoft\EdgeUpdate\Clients',
                                     0, winreg.KEY_READ | flag) as clients:
@@ -126,21 +130,21 @@ def registry_versions():
             try:
                 with winreg.OpenKey(hive, r'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full',
                                     0, winreg.KEY_READ | flag) as key:
-                    out(f'.NET Framework ({label}, {view}), release: '
+                    out(f'.NET Framework ({label}, {view}), код выпуска: '
                         + str(winreg.QueryValueEx(key, 'Release')[0]))
             except OSError:
                 pass
 
 def check_workspace():
-    out('\n--- Existing settings: read-only structure check ---')
+    out('\n--- Проверка структуры существующих настроек без изменения ---')
     root = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'ShokoAnalytics'
     seen = set()
     for _ in range(16):
         key = str(root.resolve()).casefold()
         if key in seen:
-            out('ERROR: workspace location redirect loop.'); return False
+            out('ОШИБКА: обнаружен цикл перенаправлений рабочей папки.'); return False
         seen.add(key)
-        out('Workspace folder: ' + str(root))
+        out('Рабочая папка: ' + str(root))
         redirect = None
         for name in ['workspace.location.json', 'settings.local.json']:
             path = root / name
@@ -149,60 +153,60 @@ def check_workspace():
             try:
                 data = json.loads(path.read_text(encoding='utf-8'))
                 if not isinstance(data, dict):
-                    raise ValueError('Expected a JSON object')
-                out(name + ': JSON structure OK (contents omitted).')
+                    raise ValueError('Ожидался JSON-объект настроек')
+                out(name + ': структура JSON корректна; значения в отчёт не включены.')
                 if name == 'workspace.location.json':
                     redirect = data.get('root')
                 elif not redirect:
                     redirect = data.get('redirect_root')
             except Exception as exc:
-                out(name + ': ERROR ' + type(exc).__name__ + ': ' + str(exc))
+                out(name + ': ОШИБКА ' + type(exc).__name__ + ': ' + str(exc))
                 return False
         if not redirect:
-            out('Workspace exists: ' + str(root.exists()))
+            out('Рабочая папка существует: ' + ('да' if root.exists() else 'нет'))
             return True
         if not isinstance(redirect, str):
-            out('ERROR: workspace redirect is not a path string.'); return False
+            out('ОШИБКА: адрес рабочей папки должен быть строкой пути.'); return False
         root = Path(redirect).expanduser()
-    out('ERROR: too many workspace redirects.'); return False
+    out('ОШИБКА: слишком много перенаправлений рабочей папки.'); return False
 
 def check_manifest(root):
-    out('\n--- Application files and folder layout ---')
+    out('\n--- Комплектность файлов и структура папок приложения ---')
     required = ['ShokoAnalytics.exe', 'runtime/python.exe', 'runtime/pythonw.exe',
                 'runtime/python313.dll', 'runtime/python313._pth',
                 'app/main.py', 'app/bootstrap.py', 'app/startup_diagnostics.py',
                 'Проверить запуск.cmd', 'app/web/index.html', 'build-manifest.json']
     missing = [name for name in required if not (root / name).is_file()]
     for name in required:
-        out(('MISSING: ' if name in missing else 'OK: ') + name)
+        out(('НЕТ ФАЙЛА: ' if name in missing else 'УСПЕШНО: ') + name)
     if missing:
-        out('ERROR: incomplete extraction or changed folder layout.'); return False
+        out('ОШИБКА: архив распакован не полностью или нарушена структура папок.'); return False
     try:
         manifest = json.loads((root / 'build-manifest.json').read_text(encoding='utf-8'))
-        out('Application version: ' + str(manifest.get('version')))
+        out('Версия приложения: ' + str(manifest.get('version')))
         files = manifest['files']
-        if not isinstance(files, dict): raise ValueError('Invalid files manifest')
+        if not isinstance(files, dict): raise ValueError('Некорректный список файлов в манифесте')
         bad = []
         for name, expected in files.items():
             path = (root / name).resolve()
             if not path.is_relative_to(root.resolve()):
-                raise ValueError('Manifest path outside application folder')
+                raise ValueError('Путь из манифеста выходит за пределы папки приложения')
             if not path.is_file():
-                bad.append('MISSING: ' + name); continue
+                bad.append('НЕТ ФАЙЛА: ' + name); continue
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            if digest != expected: bad.append('CHANGED: ' + name)
-        out(f'Checked {len(files)} packaged files; mismatches: {len(bad)}')
+            if digest != expected: bad.append('ИЗМЕНЁН ФАЙЛ: ' + name)
+        out(f'Проверено файлов поставки: {len(files)}; отсутствуют или изменены: {len(bad)}')
         for message in bad[:80]: out(message)
-        if len(bad) > 80: out('Remaining mismatches omitted.')
+        if len(bad) > 80: out('Остальные несовпадения не показаны: список ограничен первыми 80.')
         return not bad
     except Exception:
         out(exception_text()); return False
 
 def run_child(root, kind, data_dir, timeout):
-    out('\n--- Isolated ' + kind + ' startup ---')
-    out('This check uses a new empty diagnostic folder, not your settings or tables.')
+    out('\n--- Проверка запуска: ' + {'backend':'ядро приложения','gui':'окно приложения'}[kind] + ' ---')
+    out('Используется новая пустая диагностическая папка. Ваши настройки и таблицы не изменяются.')
     if kind == 'gui':
-        out('A test window may open and will close automatically.')
+        out('Может открыться тестовое окно; после проверки оно закроется автоматически.')
     command = [sys.executable, '-I', '-B', str(Path(__file__).resolve()),
                '--probe', kind, '--data-dir', str(data_dir)]
     try:
@@ -210,16 +214,20 @@ def run_child(root, kind, data_dir, timeout):
                                 stderr=subprocess.STDOUT, timeout=timeout,
                                 env=dict(os.environ, PYTHONIOENCODING='utf-8'))
         out(result.stdout.decode('utf-8', errors='replace'))
-        out(f'Exit code: {result.returncode} (0x{result.returncode & 0xFFFFFFFF:08X})')
+        out(f'Код завершения: {result.returncode} (0x{result.returncode & 0xFFFFFFFF:08X})')
         return result.returncode == 0
     except subprocess.TimeoutExpired as exc:
         if exc.stdout: out(exc.stdout.decode('utf-8', errors='replace'))
-        out('ERROR: diagnostic startup timed out. Close any remaining test window.')
+        out('ОШИБКА: превышено время ожидания запуска. Закройте оставшееся тестовое окно, если оно есть.')
     except Exception:
         out(exception_text())
     return False
 
 def diagnostics_main():
+    # Isolated Python ignores PYTHONIOENCODING; use one encoding for the report and probes.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='backslashreplace')
     parser = argparse.ArgumentParser()
     parser.add_argument('--probe', choices=['backend', 'gui'])
     parser.add_argument('--data-dir')
@@ -227,36 +235,35 @@ def diagnostics_main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     if args.probe: return probe(root, args.probe, args.data_dir)
-    out('SHOKO ANALYTICS - LOCAL STARTUP DIAGNOSTICS')
-    out('Time: ' + datetime.now().astimezone().isoformat())
+    out('SHOKO ANALYTICS — ДИАГНОСТИКА ЗАПУСКА')
+    out('Время: ' + datetime.now().astimezone().isoformat())
     out('Windows: ' + platform.platform())
-    out('Architecture: ' + platform.machine())
+    out('Архитектура системы: ' + platform.machine())
     out('Python: ' + sys.version.replace('\n', ' '))
-    out('Application folder: ' + str(root))
-    out('No network requests or table updates are performed.')
-    out('Existing settings and saved sign-in files are not modified or copied.')
+    out('Папка приложения: ' + str(root))
+    out('Проверка не обращается к Google и не обновляет таблицы.')
+    out('Настройки и сохранённые входы не изменяются и не копируются в отчёт.')
     try: registry_versions()
     except Exception: out(exception_text())
     files_ok = check_manifest(root)
     settings_ok = check_workspace()
-    out('\n--- Required module imports ---')
+    out('\n--- Проверка загрузки обязательных компонентов ---')
     imports_ok = True
     for name in ['truststore', 'openpyxl', 'requests', 'webview', 'clr']:
         try:
-            importlib.import_module(name); out('OK: ' + name)
+            importlib.import_module(name); out('УСПЕШНО: ' + name)
         except Exception:
-            imports_ok = False; out('ERROR: ' + name); out(exception_text())
+            imports_ok = False; out('ОШИБКА: ' + name); out(exception_text())
     work = Path(tempfile.mkdtemp(prefix='Shoko-Diagnostics-'))
-    out('\nTemporary diagnostic folder: ' + str(work))
+    out('\nВременная диагностическая папка: ' + str(work))
     backend_ok = run_child(root, 'backend', work/'backend', 35)
     gui_ok = None
     if backend_ok and not args.no_gui:
         gui_ok = run_child(root, 'gui', work/'gui', 50)
-    out('\n--- SUMMARY ---')
-    out(f'Files: {files_ok}; existing settings: {settings_ok}; imports: {imports_ok}; '
-        f'backend: {backend_ok}; window: {gui_ok}')
-    out('Review this report before sharing. It can contain Windows user names and local paths.')
-    out('No report is sent automatically. Send the text report to the application maintainer.')
+    out('\n--- ИТОГ ПРОВЕРКИ ---')
+    out('Файлы: ' + result_text(files_ok) + '\nСтруктура настроек: ' + result_text(settings_ok) + '\nКомпоненты: ' + result_text(imports_ok) + '\nЯдро приложения: ' + result_text(backend_ok) + '\nОкно приложения: ' + result_text(gui_ok))
+    out('Перед передачей просмотрите отчёт. В нём могут встречаться локальные пути.')
+    out('Отчёт никуда не отправляется автоматически. Передайте этот текстовый файл ответственному за приложение.')
     return 0 if files_ok and settings_ok and imports_ok and backend_ok and gui_ok is not False else 1
 
 if __name__ == '__main__':

@@ -18,6 +18,15 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class StartupDiagnosticsTests(unittest.TestCase):
+    def test_isolated_probe_writes_russian_utf8_independent_of_console_encoding(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); (root/'app').mkdir()
+            (root/'app/main.py').write_text("from pathlib import Path\nimport sys\ndef main():\n Path(sys.argv[2]).mkdir(parents=True,exist_ok=True)\n (Path(sys.argv[2])/'smoke-ok.txt').write_text('ok')\n", encoding='utf-8')
+            shutil.copy2(ROOT/'startup_diagnostics.py',root/'app/startup_diagnostics.py')
+            result = subprocess.run([sys.executable,'-I','-B',str(root/'app/startup_diagnostics.py'),'--probe','backend','--data-dir',str(root/'profile')],capture_output=True,timeout=20,env=dict(os.environ,PYTHONIOENCODING='ascii'))
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('УСПЕШНО: ядро приложения запущено.',result.stdout.decode('utf-8'))
+
     def test_credentials_urls_and_user_home_are_redacted(self):
         secrets = ["client_secret='secret-1'", '"refresh_token": "secret-2"',
                    'Authorization: Bearer secret-3', 'password=secret-4',

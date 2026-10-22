@@ -14,14 +14,14 @@ if not exist "%~dp0app\startup_diagnostics.py" goto missing_helper
 "%~dp0runtime\python.exe" -I -B "%~dp0app\startup_diagnostics.py" > "%REPORT%" 2>&1
 set "SHOKO_RESULT=%ERRORLEVEL%"
 echo.>> "%REPORT%"
-echo Bootstrap exit code: %SHOKO_RESULT% >> "%REPORT%"
+echo Код завершения проверки: %SHOKO_RESULT% >> "%REPORT%"
 goto show_report
 :missing_runtime
-> "%REPORT%" echo ERROR: runtime\python.exe was not found beside the diagnostic files.
->> "%REPORT%" echo Extract the complete application archive. Keep app and runtime beside ShokoAnalytics.exe.
+> "%REPORT%" echo ОШИБКА: рядом с диагностикой не найден runtime\python.exe.
+>> "%REPORT%" echo Распакуйте весь архив приложения. Сохраните папки app и runtime рядом с ShokoAnalytics.exe.
 goto show_report
 :missing_helper
-> "%REPORT%" echo ERROR: app/startup_diagnostics.py is missing. Extract the full application archive.
+> "%REPORT%" echo ОШИБКА: не найден app/startup_diagnostics.py. Распакуйте весь архив приложения.
 :show_report
 echo Отчёт сохранён: %REPORT%
 echo Откроется Блокнот. Сохраните или отправьте этот текстовый файл.
