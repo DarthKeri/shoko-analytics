@@ -5,11 +5,14 @@ import os
 import sys
 import threading
 from pathlib import Path
+from startup_diagnostics import stage
 # Follow Windows' configured trust store for Google HTTPS, including managed CAs.
 # Hostname and certificate verification remain enabled.
+stage('Подключение системных сертификатов')
 if os.name == 'nt':
     import truststore
     truststore.inject_into_ssl()
+stage('Импорт компонентов приложения')
 from shoko import __version__
 from shoko.engine import Engine
 from shoko.server import Server
@@ -25,15 +28,19 @@ def main():
     parser.add_argument('--smoke', action='store_true', help='Validate bundled assets and backend; do not open a window')
     args = parser.parse_args()
     root = args.data_dir or Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'ShokoAnalytics'
+    stage('Чтение расположения рабочей папки')
     root = resolve_root(root)
     from shoko.adapters import PROTECTED_ARCHIVE
     if root.resolve() == PROTECTED_ARCHIVE or PROTECTED_ARCHIVE in root.resolve().parents:
         raise AppError('Исходный архив нельзя использовать как рабочую папку.')
     assets = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'web'
+    stage('Проверка файлов интерфейса')
     if not (assets / 'index.html').exists():
         raise AppError('Файлы интерфейса не найдены. Выполните сборку frontend.')
     root.mkdir(parents=True, exist_ok=True)
+    stage('Открытие рабочей папки и блокировки экземпляра')
     lock = InstanceLock(root)
+    stage('Загрузка настроек и состояния приложения')
     engine = Engine(root, record_launch=not (args.smoke or args.ui_smoke))
     server = Server(engine, assets, args.port)
     try:
@@ -41,17 +48,20 @@ def main():
             assert engine.public_state()['config'] is not None
             (root / 'smoke-ok.txt').write_text(f'Shoko Analytics {__version__}: assets and backend loaded', encoding='utf-8')
             return
+        stage('Запуск локального сервера интерфейса')
         server.start()
         if args.browser:
             print(server.url, flush=True)
             threading.Event().wait()
         else:
+            stage('Подключение WebView2 и .NET')
             import webview
             if os.name == 'nt':
                 import ctypes
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Shoko.Analytics.Desktop')
             window = webview.create_window('Shoko Analytics', server.url, width=1280, height=820, min_size=(860, 600), background_color='#0d0d0d', confirm_close=False)
             server.window = window
+            window.events.loaded += lambda: stage('Окно и интерфейс готовы')
             def closing():
                 phase = engine.state['phase']
                 if phase == 'writing':
@@ -75,6 +85,7 @@ def main():
                             return
                 finally:
                     window.destroy()
+            stage('Открытие окна WebView2')
             webview.start(ui_smoke if args.ui_smoke else None, gui='edgechromium', debug=False, icon=str(assets.parent / 'assets' / 'shoko.ico'))
     finally:
         server.close()
